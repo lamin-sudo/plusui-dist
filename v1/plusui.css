@@ -1404,89 +1404,100 @@
 }
 
 /* plusui download card
-   Uses only the theme's own custom properties, so light/dark and every themeN colour
-   scheme apply automatically, exactly like the rest of the blog. Sizes follow the
-   existing .dldCo box (max-width 480px, radius 10px). */
+   The box itself is the theme's own countdown component (.dldCo > .dldBx), so the card
+   inherits the blog's native structure. The rules below only adjust the surface (owner's
+   decision: light grey + a clearer border + a soft shadow, working in dark mode), lay out
+   the extra rows, and keep the accessibility/kbd contract readable.
+   No hard-coded #fff: every colour comes from a variable or a translucent blend. */
 
-.dlc {
-  max-width: 480px;
-  margin: 24px auto;
-  padding: 14px 16px;
-  background: var(--contentB, #fff);
-  border: 1px solid var(--contentL, rgba(0, 0, 0, .08));
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, .05);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.drK .dlc, .dlc.drK {
-  background: var(--darkBa, #1b1b1f);
-  border-color: rgba(255, 255, 255, .08);
-  box-shadow: 0 2px 14px rgba(0, 0, 0, .35);
-}
+.dlc { margin: 24px 0; }
+.dlc .dldCo { display: block; width: auto; max-width: none; margin: 0; }
 
-.dlcHead { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-.dlcEx {
-  flex: 0 0 auto; min-width: 46px; text-align: center;
-  padding: 6px 8px; border-radius: var(--buttonR, 8px);
-  background: var(--linkB, var(--linkC, #008c5f)); color: #fff;
-  font-weight: 700; font-size: 11px; letter-spacing: .04em;
+/* the frame */
+.dlc .dldBx {
+  background: rgba(0, 0, 0, .03);
+  border: 1px solid #dcdcdc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
+  padding: 15px;
 }
-.dlcTitles { min-width: 0; }
-.dlcNm { font-weight: 700; color: var(--headC, #202124); word-break: break-word; }
+.drK .dlc .dldBx {
+  background: var(--darkBa, rgba(255, 255, 255, .05));
+  border-color: rgba(255, 255, 255, .12);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+}
+/* the brand accent only on real files, never on page links */
+.dlc-file .dldBx { border-left: 3px solid var(--linkB, var(--linkC, #008c5f)); }
+.drK .dlc-file .dldBx { border-left-color: var(--darkU, var(--linkC)); }
+
+.dlc .dldTp { align-items: flex-start; }
+.dlcTitles { flex: 1 1 auto; min-width: 0; }
+.dlcNm {
+  display: block; font-weight: 700; font-size: 14px; color: var(--headC, #202124);
+  text-decoration: none; word-break: break-word;
+}
 .drK .dlcNm { color: var(--darkT, #eee); }
+.dlcNm:hover { color: var(--linkC, #008c5f); text-decoration: none; }
 .dlcMt { color: var(--bodyCa, rgba(0, 0, 0, .55)); font-size: 12px; word-break: break-word; }
 .drK .dlcMt { color: var(--darkTa, rgba(255, 255, 255, .6)); }
 
-.dlcRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
-.dlcLbl { font-weight: 600; color: var(--bodyC, #333); }
-.drK .dlcLbl { color: var(--darkT, #ddd); }
+.dlc .dlcRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; font-size: 12px; }
+.dlc .dlcLbl { font-weight: 600; color: var(--bodyC, #333); }
+.drK .dlc .dlcLbl { color: var(--darkT, #ddd); }
+.dlc .dlcScannedText { font-family: var(--fontC, monospace); }
 
 .dlcB {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 6px 11px; border: 0; border-radius: var(--buttonR, 8px);
-  background: var(--linkB, var(--linkC, #008c5f)); color: #fff !important;
-  font: inherit; font-size: 12px; font-weight: 600; text-decoration: none;
-  cursor: pointer; transition: var(--trans-2, all .2s ease);
+  background: var(--linkB, var(--linkC, #008c5f)); color: #fffdfc;
+  font: inherit; font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer;
+  transition: var(--trans-2, all .2s ease);
 }
 .dlcB:hover { opacity: .88; }
-.dlcB.dlcMini { background: transparent; color: var(--linkC, #008c5f) !important; border: 1px solid var(--linkC, #008c5f); }
-.drK .dlcB.dlcMini { color: var(--darkU, #7dd) !important; border-color: var(--darkU, #7dd); }
+.dlcB.dlcMini { background: transparent; color: var(--linkC, #008c5f); border: 1px solid var(--linkC, #008c5f); }
+.drK .dlcB.dlcMini { color: var(--darkU, #7dd); border-color: var(--darkU, #7dd); }
+.drK .dlcB { color: var(--darkBa, #1b1b1f); }
 .dlcCopy { margin-left: auto; }
-
-.dlcUrlRow { background: rgba(0, 0, 0, .03); border-radius: 8px; padding: 8px 10px; }
-.drK .dlcUrlRow { background: rgba(255, 255, 255, .05); }
-.dlcUrl {
-  flex: 1 1 100%; min-width: 0; font-family: var(--fontC, monospace); font-size: 11px;
-  color: var(--bodyCa, #555); word-break: break-all;
+.dlc .dlcGo {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin: 12px 0 0; padding: 11px 16px; border-radius: var(--buttonR, 8px);
+  background: var(--linkB, var(--linkC, #008c5f)); color: #fffdfc;
+  font-size: 13px; font-weight: 700; text-decoration: none;
 }
+.dlc .dlcGo:hover { opacity: .9; }
+.dlc .dlcGo.dlcWait { background: rgba(128,128,128,.25); color: var(--bodyCa, #555); cursor: progress; }
+
+.dlc .dlcUrlRow { background: rgba(0, 0, 0, .04); border-radius: 8px; padding: 8px 10px; }
+.drK .dlc .dlcUrlRow { background: rgba(255, 255, 255, .06); }
+.dlcUrl { flex: 1 1 100%; min-width: 0; font-family: var(--fontC, monospace); font-size: 11px; word-break: break-all; color: var(--bodyCa, #555); }
 .drK .dlcUrl { color: var(--darkTa, #bbb); }
 .dlcHex { font-family: var(--fontC, monospace); font-size: 11px; word-break: break-all; }
 
-.dlcVerify { margin: 10px 0; }
-.dlcPanel { margin-top: 8px; padding: 10px; border-radius: 8px; background: rgba(0, 0, 0, .03); }
-.drK .dlcPanel { background: rgba(255, 255, 255, .05); }
+.dlcVerify { margin: 12px 0 0; }
+.dlcPanel { margin-top: 8px; padding: 10px; border-radius: 8px; background: rgba(0, 0, 0, .04); }
+.drK .dlcPanel { background: rgba(255, 255, 255, .06); }
 .dlcPanel.hidden { display: none; }
-.dlcFile { width: 100%; font: inherit; font-size: 12px; }
+.dlcFile { width: 100%; font: inherit; font-size: 12px; color: inherit; }
 .dlcHint { margin: 6px 0 10px; font-size: 11px; color: var(--bodyCa, #666); }
 .drK .dlcHint { color: var(--darkTa, #aaa); }
 .dlcHash { margin: 4px 0; font-size: 12px; }
-.dlcHash .dlcMini { margin-left: 6px; }
 .dlcErr { color: #d93025; font-size: 12px; }
 .dlcMatch.ok { color: var(--linkC, #0a7c4d); font-weight: 700; }
 .dlcMatch.no { color: #d93025; font-weight: 700; }
 .drK .dlcMatch.ok { color: #6ddba4; }
-
-.dlcNote { margin: 10px 0 0; font-size: 11px; color: var(--bodyCa, #666); }
+.dlcNote { margin: 12px 0 0; font-size: 11px; color: var(--bodyCa, #666); }
 .drK .dlcNote { color: var(--darkTa, #aaa); }
-.dlcScanned span { font-family: var(--fontC, monospace); font-size: 12px; }
 
-/* the theme's own countdown markup lives inside the card - keep it inside the box */
-.dlc .dldCo { max-width: none; margin: 12px 0 0; }
-.dlc .dldRt { text-decoration: none; }
+/* the component strip only exists while the wait runs, so the card never shows a
+   "Preparing" line the visitor did not ask for */
+.dlc .dldSl { display: none; }
+.dlc .dldCo.dldAlt .dldSl { display: block; }
+.dlc .dldCo.dldAlt .dldBx { padding-bottom: 52px; }
+.dlc .dldMe { color: var(--bodyCa, #555); }
+.drK .dlc .dldMe { color: var(--darkTa, #bbb); }
 
 @media screen and (max-width: 500px) {
-  .dlc { margin: 18px 0; padding: 12px; font-size: 12px; }
+  .dlc { margin: 18px 0; }
+  .dlc .dlcB { font-size: 12px; }
   .dlcCopy { margin-left: 0; }
 }
 

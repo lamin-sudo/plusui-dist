@@ -460,16 +460,19 @@
       window.location.href = url;
     }
   }
-  function ready(box, link, url, newTab, seconds) {
+  function ready(box, link, url, newTab, seconds, onReady) {
     box.classList.remove('dldAlt');
     box.classList.add('dldRty');
     // A card can ask for its own wording once the wait is over (data-pu-ready-text).
     if (link && link.dataset && link.dataset.puReadyText) link.textContent = link.dataset.puReadyText;
-    link.onclick = function () { lock(url); go(url, newTab); };
+    // The download box of a post always carries .dldRt; a card may drive its own button
+    // instead, so the element is optional but a missing one must never throw.
+    if (link) link.onclick = function () { lock(url); go(url, newTab); };
+    if (typeof onReady === 'function') onReady();
     if (conf().autoOpen) { setTimeout(function () { go(url, newTab); }, seconds > 0 ? 1000 : 0); }
   }
 
-  window.download = function (url, seconds, newTab, selector) {
+  window.download = function (url, seconds, newTab, selector, onReady) {
     var box = selector ? document.querySelector(selector) : null;
     if (!box) { go(url, newTab); return; }
 
@@ -481,14 +484,14 @@
 
     if (unlocked(url)) {                       // already paid the wait in this browser
       if (label) label.textContent = 'Ready to download';
-      ready(box, link, url, newTab, 0);
+      ready(box, link, url, newTab, 0, onReady);
       return;
     }
 
     var forced = conf().seconds;
     if (typeof forced === 'number' && forced <= 0) {   // Layout said: no wait at all
       if (label) label.textContent = 'Ready to download';
-      ready(box, link, url, newTab, 0);
+      ready(box, link, url, newTab, 0, onReady);
       return;
     }
 
@@ -514,7 +517,7 @@
         clearInterval(running[selector]); running[selector] = null;
         render(true);
         lock(url);
-        ready(box, link, url, newTab, total);
+        ready(box, link, url, newTab, total, onReady);
       } else {
         render(false);
       }
@@ -530,59 +533,31 @@
 // shows the exact link, hands the visitor three no-login checks, and lets the visitor hash the
 // file himself after download (WebCrypto SHA-1/256/384/512, MD5 loaded on demand from the MIT
 // js-md5 package). The only security statements it can make are verifiable ones: a SHA-256 the
-// owner published, and a VirusTotal ratio the owner copied out of a report, with its date.
+// owner published, and a VirusTotal ratio copied out of a report with its date.
 //
-// Two ways to create one, and both end in the same markup:
-//   manual  <div class="pu-dl" data-file="https://..." data-name="..." data-version="..."
-//                  data-size="..." data-source="..." data-sha256="..."
-//                  data-scanned="3/72 on 2026-11-01 (VirusTotal)" data-seconds="10"
-//                  data-mirrors="MediaFire|https://...,Drive|https://..."></div>
-//   auto    Layout -> Plus UI Settings:  downloadCards: auto   (default)
-//           every #postBody link ending in a known binary extension becomes a card.
+// FILE vs PAGE is decided by the URL, not by who marked it:
+//   FILE - an extension or a file host  -> framed box + countdown (.dldBt circle buttons)
+//   PAGE - a page on somebody else's blog -> framed box, NO countdown, "Open download page"
+// A page link with a wait in front of it is friction with no purpose, and a FILE badge on a
+// page is a lie. Both were production bugs (measured on dz-gsmdz.blogspot.com).
 //
-// Everything is built with createElement/textContent - a file name taken from a URL is
-// attacker-controlled text, and the upstream components this replaces were full of innerHTML.
+// The box reuses the theme's own countdown component DOM (.dldCo > .dldBx > .dldTp >
+// .dldIm[data-text] + svg.dldSv, then .dldSl > .dldMe, then a.dldBt.dldDl / a.dldBt.dldRt),
+// because that is what the component CSS in plusui.css styles. v1.0.12 invented its own markup
+// and the result was an unstyled, unclickable-looking green word - the reason the tests now
+// assert the computed look of the button, not only its behaviour.
+//
+// Everything is createElement/textContent: a file name taken from a URL is attacker text.
 (function () {
   'use strict';
 
   var EXT = ['apk', 'zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'exe', 'msi', 'img', 'iso', 'obb', 'dex', 'bin'];
   var SKIP_inside = 'pre, code, blockquote, .dldCo, .dlc, .pu-dl, a[class*="btn"], .postTags, .labl';
-  var created = 0;
-  var done = [];
   var MD5_URL = 'https://cdn.jsdelivr.net/npm/js-md5@0.9.2/build/md5.min.js';
+  var FILE_SECONDS = 3;                 // Layout -> downloadSeconds wins over this
+  var created = 0;
 
-  function cfg() { return (window.PU && PU.cfg) ? PU.cfg : {}; }
-  function el(tag, cls, text) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined && text !== null) e.textContent = String(text);
-    return e;
-  }
-  function safeUrl(u) {
-    u = String(u || '').trim();
-    return /^https?:\/\/\S+$/i.test(u) ? u : '';
-  }
-  function base64UrlNoPad(str) {
-    var b = btoa(unescape(encodeURIComponent(str)));
-    return b.replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
-  }
-  function hostOf(u) { var m = String(u).match(/^https?:\/\/([^/]+)/i); return m ? m[1].replace(/^www\./, '') : ''; }
-  function nameFromUrl(u) {
-    var p = String(u).split('?')[0].split('#')[0];
-    var last = p.substring(p.lastIndexOf('/') + 1);
-    var out = last;
-    try { out = decodeURIComponent(last); } catch (e) { /* keep the raw form */ }
-    return out.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 120) || last.slice(0, 120);
-  }
-  function extOf(u) {
-    var p = String(u).split('?')[0].split('#')[0];
-    var m = p.match(/\.([a-z0-9]{2,4})$/i);
-    return m ? m[1].toLowerCase() : '';
-  }
-
-  // Most of the owner's links are hosted on file services whose URLs carry no extension
-  // (drive.google.com/uc, mediafire, GitHub releases...), so an extension list alone would
-  // miss exactly the links that need a card.
+  // Most of the owner's links are hosted on file services whose URLs carry no extension.
   var HOST_PATTERNS = [
     /(^|[/.])drive\.google\.com\/(uc|file\/d|u\/\d+\/uc)/i,
     /(^|[/.])docs\.google\.com\/uc/i,
@@ -596,28 +571,65 @@
     /(^|[/.])sourceforge\.net\/[^/]+\/files\//i,
     /(^|[/.])androidfilehost\.com\/\?fid=/i,
     /(^|[/.])apkpure\.com|(^|[/.])apkcombo\.com\/.*download/i,
-    // added after auditing his 142 posts: these three carry 27 real file-share links
+    // added after auditing his 142 posts: these three carry 32 real file-share links
     /(^|[/.])jiocloud\.com\//i,
     /(^|[/.])(1drv\.ms|onedrive\.live\.com|sharepoint\.com)\/(u|s|c)\//i,
     /(^|[/.])box\.com\/s\//i
   ];
 
-  function looksLikeDownload(u) {
+  function cfg() { return (window.PU && PU.cfg) ? PU.cfg : {}; }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function svgEl(tag, cls) {
+    var e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    if (cls) e.setAttribute('class', cls);
+    return e;
+  }
+  function safeUrl(u) {
+    u = String(u || '').trim();
+    return /^https?:\/\/\S+$/i.test(u) ? u : '';
+  }
+  function base64UrlNoPad(str) {
+    return btoa(unescape(encodeURIComponent(str))).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  }
+  function hostOf(u) { var m = String(u).match(/^https?:\/\/([^/]+)/i); return m ? m[1].replace(/^www\./, '') : ''; }
+  function extOf(u) {
+    var p = String(u).split('?')[0].split('#')[0];
+    var m = p.match(/\.([a-z0-9]{2,4})$/i);
+    return m ? m[1].toLowerCase() : '';
+  }
+  function nameFromUrl(u) {
+    var p = String(u).split('?')[0].split('#')[0];
+    var last = p.substring(p.lastIndexOf('/') + 1);
+    var out = last;
+    try { out = decodeURIComponent(last); } catch (e) { /* raw form is still safe */ }
+    return out.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 120) || last.slice(0, 120) || hostOf(u);
+  }
+  function isFileUrl(u) {
     if (EXT.indexOf(extOf(u)) !== -1) return true;
     for (var i = 0; i < HOST_PATTERNS.length; i++) if (HOST_PATTERNS[i].test(u)) return true;
-    return /[?&](download|dl)=1(&|$)/i.test(u) || /\/download\/?(\?|$|#)/i.test(u);
+    return /[?&](download|dl)=1(&|$)/i.test(u) || /\/download\/?(\?|#|$)/i.test(u);
   }
 
-  // ---------- small building blocks ----------
+  // ---------- rows ----------
   function linkButton(href, label, cls) {
     var a = el('a', 'dlcB ' + (cls || ''), label);
     a.href = href; a.target = '_blank'; a.rel = 'nofollow noopener noreferrer';
     return a;
   }
-
+  function row(label, nodes) {
+    var r = el('div', 'dlcRow');
+    if (label) r.appendChild(el('span', 'dlcLbl', label));
+    (nodes || []).forEach(function (n) { if (n) r.appendChild(n); });
+    return r;
+  }
   function checkRow(fileUrl) {
     var row = el('div', 'dlcRow dlcScan');
-    row.appendChild(el('span', 'dlcLbl', 'Check this link before installing:'));
+    row.appendChild(el('span', 'dlcLbl', 'Check before you install:'));
     row.appendChild(linkButton('https://www.virustotal.com/gui/url/' + base64UrlNoPad(fileUrl), 'VirusTotal'));
     row.appendChild(linkButton('https://transparencyreport.google.com/safe-browsing/search?url=' + encodeURIComponent(fileUrl), 'Google Safe Browsing'));
     var host = hostOf(fileUrl);
@@ -625,29 +637,26 @@
     row.appendChild(linkButton('https://www.virustotal.com/gui/home/urls', 'Scan a new URL'));
     return row;
   }
-
   function copyRow(fileUrl) {
     var row = el('div', 'dlcRow dlcUrlRow');
-    var code = el('code', 'dlcUrl', fileUrl);
-    row.appendChild(code);
+    row.appendChild(el('code', 'dlcUrl', fileUrl));
     var btn = el('button', 'dlcB dlcCopy', 'Copy link');
     btn.type = 'button';
     btn.addEventListener('click', function () {
-      var doneBtn = function (ok) {
+      var say = function (ok) {
         btn.textContent = ok ? 'Copied' : 'Select and copy';
         setTimeout(function () { btn.textContent = 'Copy link'; }, 1800);
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(fileUrl).then(function () { doneBtn(true); }, function () { doneBtn(false); });
-      } else { doneBtn(false); }
+        navigator.clipboard.writeText(fileUrl).then(function () { say(true); }, function () { say(false); });
+      } else { say(false); }
     });
     row.appendChild(btn);
     return row;
   }
 
-  // ---------- verify the file you downloaded ----------
+  // ---------- verify the downloaded file, locally ----------
   var ALGOS = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
-
   function verifyPanel(published) {
     var box = el('div', 'dlcVerify');
     var head = el('button', 'dlcB dlcToggle', 'Verify the file you downloaded');
@@ -656,41 +665,29 @@
     var pick = document.createElement('input');
     pick.type = 'file'; pick.className = 'dlcFile';
     var out = el('div', 'dlcOut');
-    var note = el('p', 'dlcHint',
-      'Nothing is uploaded. The file stays on your device and the hash is computed in your browser.');
-
     head.addEventListener('click', function () {
       panel.classList.toggle('hidden');
       head.textContent = panel.classList.contains('hidden') ? 'Verify the file you downloaded' : 'Hide verification';
     });
-
     pick.addEventListener('change', function () {
       var f = pick.files && pick.files[0];
       out.textContent = '';
       if (!f) return;
-      var sizeLine = el('div', 'dlcHash', '');
-      sizeLine.textContent = 'File: ' + f.name + ' (' + (f.size >= 1048576
-        ? (f.size / 1048576).toFixed(2) + ' MB'
-        : (f.size >= 1024 ? (f.size / 1024).toFixed(1) + ' KB' : f.size + ' bytes')) + ')';
-      out.appendChild(sizeLine);
-
-      var reading = f.arrayBuffer ? f.arrayBuffer() : Promise.reject(new Error('FileReader missing'));
-      reading.then(function (buf) {
-        var jobs = [];
-        if (window.crypto && crypto.subtle) {
-          ALGOS.forEach(function (a) {
-            jobs.push(crypto.subtle.digest(a, buf).then(function (d) {
-              var hex = [].map.call(new Uint8Array(d), function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join('');
-              addHash(a, hex, buf);
-            })['catch'](function (e) { out.appendChild(el('div', 'dlcErr', a + ' failed: ' + e.message)); }));
-          });
-        } else {
-          out.appendChild(el('div', 'dlcErr', 'This browser has no WebCrypto, so SHA hashes are unavailable.'));
-        }
-        return Promise.all(jobs);
+      var size = f.size >= 1048576 ? (f.size / 1048576).toFixed(2) + ' MB'
+        : (f.size >= 1024 ? (f.size / 1024).toFixed(1) + ' KB' : f.size + ' bytes');
+      out.appendChild(el('div', 'dlcHash', 'File: ' + f.name + ' (' + size + ')'));
+      if (!(window.crypto && crypto.subtle)) {
+        out.appendChild(el('div', 'dlcErr', 'This browser has no WebCrypto, so hashes are unavailable.'));
+        return;
+      }
+      f.arrayBuffer().then(function (buf) {
+        return Promise.all(ALGOS.map(function (algo) {
+          return crypto.subtle.digest(algo, buf).then(function (d) {
+            addHash(algo, [].map.call(new Uint8Array(d), function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join(''), buf);
+          })['catch'](function (e) { out.appendChild(el('div', 'dlcErr', algo + ' failed: ' + e.message)); });
+        }));
       })['catch'](function (e) { out.appendChild(el('div', 'dlcErr', 'Could not read the file: ' + e.message)); });
     });
-
     function addHash(algo, hex, buf) {
       var line = el('div', 'dlcHash');
       line.appendChild(el('b', null, algo + ': '));
@@ -698,218 +695,230 @@
       line.appendChild(linkButton('https://www.virustotal.com/gui/file/' + hex, 'Look up on VirusTotal', 'dlcMini'));
       out.appendChild(line);
       if (published && algo === 'SHA-256') {
-        var want = String(published).trim().toLowerCase();
-        var match = hex === want;
+        var match = hex === String(published).trim().toLowerCase();
         out.appendChild(el('div', 'dlcMatch ' + (match ? 'ok' : 'no'),
           match ? 'Matches the SHA-256 published above - this is the same file.'
                 : 'Does NOT match the SHA-256 published above. Delete it and get it from the source page.'));
       }
-      // MD5 only on request: it is the one algorithm WebCrypto does not ship.
-      if (algo === 'SHA-256' && !window.md5) {
+      if (algo === 'SHA-256' && !window.md5) {         // MD5 is the one algorithm WebCrypto lacks
         var s = document.createElement('script');
         s.src = MD5_URL; s.async = true;
         s.onload = function () {
           if (typeof window.md5 !== 'function') return;
-          var line2 = el('div', 'dlcHash');
-          line2.appendChild(el('b', null, 'MD5: '));
-          line2.appendChild(el('span', 'dlcHex', window.md5(buf)));
-          out.appendChild(line2);
+          var l2 = el('div', 'dlcHash');
+          l2.appendChild(el('b', null, 'MD5: '));
+          l2.appendChild(el('span', 'dlcHex', window.md5(buf)));
+          out.appendChild(l2);
         };
-        s.onerror = function () { /* MD5 is optional; the SHA row is already there */ };
+        s.onerror = function () { /* SHA rows are already on screen */ };
         document.head.appendChild(s);
       }
     }
-
-    box.appendChild(head); box.appendChild(panel);
-    panel.appendChild(pick); panel.appendChild(note); panel.appendChild(out);
+    box.appendChild(head);
+    box.appendChild(panel);
+    panel.appendChild(pick);
+    panel.appendChild(el('p', 'dlcHint', 'Nothing is uploaded. The file stays on your device and the hash is computed in your browser.'));
+    panel.appendChild(out);
     return box;
   }
 
-  // ---------- the card itself ----------
+  // ---------- the card ----------
   function card(data) {
     var fileUrl = safeUrl(data.file);
     if (!fileUrl) return null;
     var id = 'dlc-' + (++created);
-    var ext = (data.ext || extOf(fileUrl) || 'file').toUpperCase();
+    var kind = isFileUrl(fileUrl) ? 'file' : 'page';
+    var ext = (extOf(fileUrl) || (kind === 'file' ? 'file' : 'link')).toUpperCase();
     var name = data.name || nameFromUrl(fileUrl);
     var host = hostOf(fileUrl);
 
-    var box = el('div', 'dlc');
+    var box = el('div', 'dlc dlc-' + kind);
     box.id = id;
-    box.setAttribute('data-pu-card', '1');
+    box.setAttribute('data-pu-card', kind);
 
-    var top = el('div', 'dlcHead');
-    top.appendChild(el('span', 'dlcEx', ext));
+    var gate = el('div', 'dldCo');
+    gate.id = id + '-box';                 // download.js toggles dldAlt/dldRty on THIS element
+    var inner = el('div', 'dldBx');
+    var top = el('div', 'dldTp');
+
+    var icon = el('div', 'dldIm');
+    icon.setAttribute('data-text', ext);
+    if (data.image) { icon.setAttribute('style', 'background-image:url(' + safeUrl(data.image) + ')'); }
+    var ring = svgEl('svg', 'dldSv');
+    ring.setAttribute('viewBox', '0 0 34 34');
+    var track = svgEl('circle', 'b'); track.setAttribute('cx', '17'); track.setAttribute('cy', '17'); track.setAttribute('r', '15.92');
+    var prog = svgEl('circle', 'c dldPg'); prog.setAttribute('cx', '17'); prog.setAttribute('cy', '17'); prog.setAttribute('r', '15.92');
+    ring.appendChild(track); ring.appendChild(prog);
+    icon.appendChild(ring);
+    top.appendChild(icon);
+
     var titles = el('div', 'dlcTitles');
-    titles.appendChild(el('div', 'dlcNm', name));
+    var nameLink = el('a', 'dlcNm', name);
+    nameLink.href = fileUrl; nameLink.target = '_blank'; nameLink.rel = 'nofollow noopener noreferrer';
+    nameLink.tabIndex = -1;                // the button is the keyboard path; no duplicate stop
+    titles.appendChild(nameLink);
     var meta = [];
     if (data.version) meta.push('v' + data.version);
     if (data.size) meta.push(data.size);
-    if (host) meta.push(host);
+    meta.push(host);
     titles.appendChild(el('div', 'dlcMt', meta.join('  ·  ')));
     top.appendChild(titles);
-    box.appendChild(top);
+    inner.appendChild(top);
 
     if (data.source) {
-      var src = el('div', 'dlcRow');
-      src.appendChild(el('span', 'dlcLbl', 'Source page:'));
-      src.appendChild(linkButton(safeUrl(data.source) || '#', data['source-name'] || hostOf(data.source), 'dlcMini'));
-      box.appendChild(src);
+      var sUrl = safeUrl(data.source);
+      inner.appendChild(row('Source page:', [sUrl ? linkButton(sUrl, data['source-name'] || hostOf(data.source), 'dlcMini') : el('span', null, data['source-name'] || '')]));
     }
-    if (data.sha256) {
-      var sh = el('div', 'dlcRow');
-      sh.appendChild(el('span', 'dlcLbl', 'SHA-256 published:'));
-      sh.appendChild(el('code', 'dlcHex', String(data.sha256).slice(0, 64)));
-      box.appendChild(sh);
-    }
-    if (data.scanned) {
-      var sc = el('div', 'dlcRow dlcScanned');
-      sc.appendChild(el('span', 'dlcLbl', 'Last report:'));
-      sc.appendChild(el('span', null, data.scanned));
-      box.appendChild(sc);
-    }
-
-    box.appendChild(copyRow(fileUrl));
-
-    // mirrors
+    if (data.sha256) inner.appendChild(row('SHA-256 published:', [el('code', 'dlcHex', String(data.sha256).slice(0, 64))]));
+    if (data.scanned) inner.appendChild(row('Last report:', [el('span', 'dlcScannedText', data.scanned)]));
+    inner.appendChild(copyRow(fileUrl));
     if (data.mirrors) {
-      var mr = el('div', 'dlcRow dlcMirrors');
-      mr.appendChild(el('span', 'dlcLbl', 'Mirrors:'));
-      String(data.mirrors).split(',').forEach(function (part) {
+      var parts = String(data.mirrors).split(',').map(function (part) {
         var kv = part.split('|');
         var u = safeUrl(kv[1] || kv[0]);
-        if (!u) return;
-        mr.appendChild(linkButton(u, (kv[1] ? kv[0] : hostOf(u)), 'dlcMini'));
+        return u ? linkButton(u, kv[1] ? kv[0] : hostOf(u), 'dlcMini') : null;
       });
-      if (mr.children.length > 1) box.appendChild(mr);
+      var mirrorRow = row('Mirrors:', parts);
+      if (mirrorRow.querySelectorAll('a').length) inner.appendChild(mirrorRow);
     }
+    inner.appendChild(checkRow(fileUrl));
+    inner.appendChild(verifyPanel(data.sha256));
+    inner.appendChild(el('p', 'dlcNote', kind === 'file'
+      ? 'Not hosted or tested by this blog. Scan the file and check its hash before installing.'
+      : 'This opens the download page on ' + host + ' - the file itself is not hosted by this blog, so scan it there before installing.'));
+    gate.appendChild(inner);
 
-    box.appendChild(checkRow(fileUrl));
-    box.appendChild(verifyPanel(data.sha256));
-
-    var gate = el('div', 'dldCo');
-    // download.js toggles dldAlt/dldRty on the element it is given, so the selector must be
-    // the countdown box itself - pointing it at the card left the box never "ready".
-    gate.id = id + '-box';
-    gate.appendChild(el('span', 'dldMe', 'Download'));
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 34 34');
-    var c1 = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    c1.setAttribute('class', 'dldPg'); c1.setAttribute('cx', '17'); c1.setAttribute('cy', '17'); c1.setAttribute('r', '15.92');
-    svg.appendChild(c1);
-    gate.appendChild(svg);
-    var btn = el('a', 'dldRt', 'Download');
-    btn.href = fileUrl;
-    btn.rel = 'nofollow noopener noreferrer';
-    // Two clicks: the first starts the wait, the second leaves - in a NEW tab, so the
-    // article (and the disclaimer the visitor just read) stays where it was.
-    btn.dataset.puReadyText = 'Download now';
-    gate.appendChild(btn);
+    // the component's countdown strip (FILE only). The action itself is ONE labelled
+    // button, not two icon circles: the owner's complaint was a control that looked like
+    // text, and a 40px circle with no label is exactly that on a phone.
+    if (kind === 'file') {
+      var slide = el('div', 'dldSl');
+      slide.appendChild(el('div', 'dldMe', 'Preparing download'));
+      gate.appendChild(slide);
+    }
     box.appendChild(gate);
 
-    var note = el('p', 'dlcNote',
-      'Not hosted or tested by this blog. Download from the source page, scan the file, and verify its hash before installing.');
-    box.appendChild(note);
+    var action = el('a', 'dlcGo', kind === 'file' ? 'Download' : 'Open download page');
+    action.href = fileUrl; action.target = '_blank'; action.rel = 'nofollow noopener noreferrer';
+    box.appendChild(action);
 
     var seconds = data.seconds !== undefined && data.seconds !== null && data.seconds !== ''
       ? parseInt(data.seconds, 10) : null;
     if (isNaN(seconds)) seconds = null;
     var forced = cfg().downloadSeconds;
     if (seconds === null && typeof forced === 'number') seconds = forced;
-    if (seconds === null) seconds = 10;
+    if (seconds === null) seconds = FILE_SECONDS;
 
-    var sent = false;
-    btn.addEventListener('click', function (ev) {
-      // Never let the bare href move the page - the wait must happen first.
-      ev.preventDefault();
-      if (typeof window.download !== 'function') { window.open(fileUrl, '_blank', 'noopener,noreferrer'); return; }
-      if (!gate.classList.contains('dldRty')) { window.download(fileUrl, seconds, true, '#' + gate.id); return; }
-      // The wait is paid: download.js owns this click and opens the tab. A double click
-      // must not open a second one.
-      if (sent) { btn.onclick = null; return; }
-      sent = true;
-    });
+    if (kind === 'file') {
+      var armed = false;
+      var activate = function (ev) {
+        ev.preventDefault();                 // the bare href must never jump ahead of the wait
+        if (typeof window.download !== 'function') { window.open(fileUrl, '_blank', 'noopener,noreferrer'); return; }
+        if (armed) return;                   // download.js put the real link on the button already
+        action.classList.add('dlcWait');
+        action.textContent = 'Please wait';
+        window.download(fileUrl, seconds, true, '#' + gate.id, function () {
+          armed = true;
+          action.classList.remove('dlcWait');
+          action.textContent = 'Download now';
+          action.onclick = function (e) {
+            e.preventDefault();
+            action.onclick = null;        // one tab per card: a double click must not open two
+            window.open(fileUrl, '_blank', 'noopener,noreferrer');
+          };
+        });
+        // A returning visitor has already paid the wait: download() returns with the box
+        // already ready, so this same click can open the link. Opening it inside the
+        // callback above would fire ~1s later with no click at all - that was a real bug.
+        if (gate.classList.contains('dldRty')) { action.onclick = null; window.open(fileUrl, '_blank', 'noopener,noreferrer'); }
+      };
+      action.addEventListener('click', activate);
+      nameLink.addEventListener('click', activate);   // same rule for the title: no bypass
+    }
     return box;
   }
 
   // ---------- discovery ----------
+  var seenHrefs = {};                 // one card per URL per page, marked links win
   function fromManualNodes(root) {
     var nodes = (root && root.querySelectorAll ? root : document).querySelectorAll('.pu-dl[data-file]');
     Array.prototype.forEach.call(nodes, function (n) {
       if (n.dataset.puDone) return;
       n.dataset.puDone = '1';
-      var data = {
-        file: n.getAttribute('data-file'),
-        name: n.getAttribute('data-name'), version: n.getAttribute('data-version'),
+      var url = n.getAttribute('data-file');
+      var box = card({
+        file: url, name: n.getAttribute('data-name'), version: n.getAttribute('data-version'),
         size: n.getAttribute('data-size'), source: n.getAttribute('data-source'),
-        'source-name': n.getAttribute('data-source-name'),
-        sha256: n.getAttribute('data-sha256'), scanned: n.getAttribute('data-scanned'),
-        seconds: n.getAttribute('data-seconds'), mirrors: n.getAttribute('data-mirrors')
-      };
-      var box = card(data);
-      if (box) n.appendChild(box);
-      else { n.appendChild(el('div', 'dlcNote', 'This download link is not usable.')); }
+        'source-name': n.getAttribute('data-source-name'), sha256: n.getAttribute('data-sha256'),
+        scanned: n.getAttribute('data-scanned'), seconds: n.getAttribute('data-seconds'),
+        mirrors: n.getAttribute('data-mirrors'), image: n.getAttribute('data-image')
+      });
+      if (box) { seenHrefs[box.querySelector('.dlcUrl').textContent] = true; n.appendChild(box); }
+      else n.appendChild(el('div', 'dlcNote', 'This download link is not usable.'));
     });
   }
 
+  function collect(scope) { return scope.querySelectorAll('#postBody a[href]'); }
   function fromLinks(root) {
-    var mode = cfg().downloadCards;                    // auto (default) | manual | off
+    var mode = cfg().downloadCards;                       // auto (default) | manual | off
     if (mode === 'off') return;
     var scope = (root && root.querySelectorAll) ? root : document;
-    var links = scope.querySelectorAll('#postBody a[href]');
-    Array.prototype.forEach.call(links, function (a) {
+    var links = collect(scope);
+
+    function handle(a) {
       if (a.dataset.puCard) return;
-      // never wrap the links a card of ours already prints (checks, mirrors, lookup buttons)
+      // our own card's links (checks, mirrors, lookup) are never candidates
       if (a.closest && a.closest('.dlc')) { a.dataset.puCard = 'inner'; return; }
       var url = safeUrl(a.href);
       if (!url) return;
+      // an explicit opt-out beats everything: old in-text links must be able to stay plain
+      if (a.classList.contains('pu-plain') || a.getAttribute('data-dl') === 'off') { a.dataset.puCard = 'plain'; return; }
       if (a.closest && a.closest(SKIP_inside)) { a.dataset.puCard = 'skipped'; return; }
-      if (a.querySelector('img') || a.getElementsByTagName('img').length) { a.dataset.puCard = 'skipped'; return; }
+      if (a.getElementsByTagName('img').length) { a.dataset.puCard = 'skipped'; return; }
 
-      // The owner copies links from other GSM sites and cannot know where each one lands, so
-      // the trustworthy signal is him marking the link: class="pu-card" or data-dl on the <a>.
-      // Guessing by extension/host stays as a bonus for the obvious files.
-      var forced = a.classList.contains('pu-card') || a.hasAttribute('data-dl');
+      var forced = a.classList.contains('pu-card') || (a.getAttribute('data-dl') && a.getAttribute('data-dl') !== 'off');
       if (!forced) {
-        if (mode !== 'auto') return;                   // manual = marked links only, never guessed
-        if (!looksLikeDownload(url)) { a.dataset.puCard = 'skipped'; return; }
+        if (mode !== 'auto') return;                      // manual = marked links only, never guessed
+        if (!isFileUrl(url)) { a.dataset.puCard = 'skipped'; return; }
       }
+      if (seenHrefs[url]) { a.dataset.puCard = 'dupe'; return; }   // one card per URL, marked/manual wins
+      seenHrefs[url] = true;
 
       var text = (a.textContent || '').trim();
       var name = (text.length >= 4 && text.length <= 120 && !/^https?:/i.test(text)) ? text : nameFromUrl(url);
-      if (a.dataset.dlName) name = a.dataset.dlName;
       var box = card({
-        file: url,
-        name: name,
-        source: a.getAttribute('data-dl-source') || '',
-        seconds: a.getAttribute('data-dl-seconds')
+        file: url, name: name,
+        seconds: a.getAttribute('data-dl-seconds'),
+        source: a.getAttribute('data-dl-source')
       });
       if (!box) return;
       a.dataset.puCard = forced ? 'marked' : '1';
       a.parentNode.replaceChild(box, a);
+    }
+
+    // marked links first so they win the one-card-per-URL rule
+    Array.prototype.forEach.call(links, function (a) {
+      if (!a.dataset.puCard && (a.classList.contains('pu-card') || (a.getAttribute('data-dl') && a.getAttribute('data-dl') !== 'off'))) handle(a);
     });
+    Array.prototype.forEach.call(links, handle);
   }
 
   function scan(root) { fromManualNodes(root); fromLinks(root); }
-
   window.puDownloadCards = scan;
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () { scan(document); });
   } else { scan(document); }
 
-  // Blogger's infinite scroll adds posts after the fact; watch the post list only.
   var host = document.getElementById('main-widget') || document.getElementById('blogPosts') || document.body;
   var timer = null;
   if (host && window.MutationObserver) {
     new MutationObserver(function (muts) {
-      var worth = muts.some(function (m) { return m.addedNodes && m.addedNodes.length; });
-      if (!worth) return;
+      if (!muts.some(function (m) { return m.addedNodes && m.addedNodes.length; })) return;
       clearTimeout(timer);
       timer = setTimeout(function () { scan(host); }, 400);
     }).observe(host, { childList: true, subtree: true });
   }
-
-  done.push(created);
 })();
 
 
