@@ -393,3 +393,280 @@
   }
   autoStart();
 })();
+
+
+// plusui-lazy — bookmarked posts
+// Replaces BookmarkPosts.min.js (which was packed twice over). Same storage key
+// (Bookmark_Post) so existing visitors keep their saved list, same DOM classes the
+// component CSS expects, same bkMrk() entry point the template calls after
+// infinite-scroll loads more posts.
+//
+// Fixed versus upstream:
+//   * post titles/urls never go through innerHTML or inline onclick - they become
+//     text nodes and addEventListener handlers (upstream built
+//     onclick="delBmPs('ID')" and background-image:url('IMG') from raw values)
+//   * links and images are validated: only http(s)/relative URLs survive
+//   * the saved map is capped and pruned, and corrupt JSON no longer bricks the panel
+//   * the badge count is derived from the map instead of drifting from it
+(function () {
+  'use strict';
+
+  var KEY = 'Bookmark_Post';
+  var MAX = 60;
+  var cfg = Object.assign({
+    bmTitle: 'Bookmarks', closeText: 'Close', noBmMes: 'No bookmarks yet',
+    noBmLink: '/search', noBmAll: 'View all posts', addedNtf: 'Bookmarked',
+    removedNtf: 'Removed', noBmIcon: '', delIcon: ''
+  }, (window.PuSet && window.PuSet.bookmark) || {});
+
+  function read() {
+    var raw = PU.store.local.get(KEY);
+    if (!raw) return {};
+    try {
+      var obj = JSON.parse(raw);
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+      return obj;
+    } catch (e) { PU.store.local.del(KEY); return {}; }
+  }
+  function write(map) {
+    var ids = Object.keys(map);
+    if (ids.length > MAX) {
+      ids.slice(0, ids.length - MAX).forEach(function (k) { delete map[k]; });  // oldest first
+    }
+    PU.store.local.set(KEY, JSON.stringify(map));
+  }
+  function safeUrl(url) {
+    var u = String(url || '');
+    return (/^(https?:)?\/\//i.test(u) || /^\//.test(u)) ? u : '';
+  }
+  function notify(html) {
+    if (typeof window.toastNotif === 'function') { try { window.toastNotif(html); } catch (e) {} }
+  }
+  function buzz() { if (typeof window.vibRate === 'function') { try { window.vibRate(50); } catch (e) {} } }
+  function el(tag, cls, attrs) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    Object.keys(attrs || {}).forEach(function (k) { if (attrs[k]) node.setAttribute(k, attrs[k]); });
+    return node;
+  }
+
+  /* ---- panel ---- */
+  var panel, list;
+  function buildPanel() {
+    if (panel) return panel;
+    var host = document.getElementById('header-icon') || document.body;
+    var box = el('div', 'cBkPs');
+    var check = el('input', 'bkmI hidden', { type: 'checkbox', id: 'offBkm' });
+    var wrap = el('div', 'wBkm');
+    var head = el('div', 'bkmH');
+    var title = el('span', 'bkmTtl'); title.textContent = cfg.bmTitle;
+    var close = el('label', 'c', { 'for': 'offBkm' }); close.textContent = cfg.closeText;
+    head.appendChild(title); head.appendChild(close);
+    list = el('div', 'bkmC', { id: 'dBmPs' });
+    wrap.appendChild(head); wrap.appendChild(list);
+    var backdrop = el('label', 'bkmCls', { 'for': 'offBkm' });
+    box.appendChild(check); box.appendChild(wrap); box.appendChild(backdrop);
+    host.appendChild(box);
+    panel = box;
+    return box;
+  }
+
+  function render() {
+    if (!list) return;
+    var map = read();
+    var ids = Object.keys(map);
+    list.textContent = '';
+
+    var badge = document.querySelector('.tBkmt');
+    if (badge) {
+      badge.setAttribute('data-text', String(ids.length));
+      badge.classList.toggle('n', ids.length === 0);
+    }
+
+    if (!ids.length) {
+      var empty = el('div', 'n');
+      if (cfg.noBmIcon) {
+        var icon = el('span');
+        icon.innerHTML = cfg.noBmIcon;            // theme-authored SVG, not visitor data
+        while (icon.firstChild) empty.appendChild(icon.firstChild);
+      }
+      var msg = el('span'); msg.textContent = cfg.noBmMes;
+      var all = el('a', null, { href: safeUrl(cfg.noBmLink) || '#' });
+      all.textContent = cfg.noBmAll;
+      empty.appendChild(msg); empty.appendChild(all);
+      list.appendChild(empty);
+      return;
+    }
+
+    ids.forEach(function (id) {
+      var post = map[id] || {};
+      var href = safeUrl(post.link);
+      var item = el('div', 'item', { 'data-id': id });
+
+      var thumb = el('div', 'pThmb');
+      var tlink = el('a', 'thmb', href ? { href: href } : null);
+      var img = el('span', 'bkmImg');
+      var pic = safeUrl(post.image);
+      if (pic) img.style.backgroundImage = 'url("' + pic.replace(/"/g, '%22') + '")';
+      tlink.appendChild(img); thumb.appendChild(tlink);
+
+      var ttl = el('div', 'itmTtl');
+      var tanchor = el('a', 'aTtl', href ? { href: href } : null);
+      tanchor.textContent = post.title || id;
+      ttl.appendChild(tanchor);
+
+      var del = el('span', 'del', { role: 'button', tabindex: '0', 'aria-label': 'Remove' });
+      if (cfg.delIcon) { var s = el('span'); s.innerHTML = cfg.delIcon; while (s.firstChild) del.appendChild(s.firstChild); }
+      var remove = function () {
+        buzz();
+        item.classList.add('d');
+        setTimeout(function () {
+          var m = read(); delete m[id]; write(m); render(); mark();
+        }, 350);
+        notify(cfg.removedNtf);
+      };
+      del.addEventListener('click', remove);
+      del.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); remove(); } });
+
+      item.appendChild(thumb); item.appendChild(ttl); item.appendChild(del);
+      list.appendChild(item);
+    });
+  }
+
+  /* ---- save buttons ---- */
+  function mark() {
+    var map = read();
+    Array.prototype.forEach.call(document.querySelectorAll('.bmPs'), function (btn) {
+      var id = btn.getAttribute('bm-id');
+      btn.classList.toggle('a', !!(id && map[id]));
+    });
+  }
+
+  function save(btn) {
+    var id = btn.getAttribute('bm-id');
+    if (!id) return;
+    var map = read();
+    if (map[id]) {
+      delete map[id];
+      notify(cfg.removedNtf);
+    } else {
+      map[id] = {
+        id: id,
+        title: btn.getAttribute('bm-ttl') || '',
+        image: btn.getAttribute('bm-img') || '',
+        link: btn.getAttribute('bm-url') || location.href
+      };
+      notify(cfg.addedNtf);
+    }
+    write(map);
+    buzz();
+    mark();
+    render();
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('.bmPs') : null;
+    if (btn) { e.preventDefault(); save(btn); }
+  });
+
+  // Called by the template after infinite-scroll injects more posts.
+  window.bkMrk = function () { buildPanel(); mark(); render(); };
+
+  function start() {
+    if (!document.body) { document.addEventListener('DOMContentLoaded', start, { once: true }); return; }
+    if (!document.querySelector('.bmPs') && !document.querySelector('.isBkm')) return;
+    window.bkMrk();
+  }
+  start();
+})();
+
+
+// plusui-lazy — offline / online notice
+// Replaces NoInternetWidget.min.js. Same #noInternet popup and the same
+// PuSet.noInternet messages, but it also reads the state on load (upstream only
+// reacted to a change, so a visitor who arrived already offline saw nothing) and
+// builds the toast with nodes instead of concatenating HTML.
+(function () {
+  'use strict';
+
+  var cfg = Object.assign({ enablePopup: 'true', enableToast: 'true', offlineMes: 'You are Offline', onlineMes: 'You are Online' },
+    (window.PuSet && window.PuSet.noInternet) || {});
+
+  function popup() { return document.getElementById('noInternet'); }
+
+  function show(isOnline) {
+    var box = popup();
+    // The notice is for the offline case: show it when the connection is lost,
+    // hide it again when the connection comes back.
+    if (box && cfg.enablePopup === 'true') box.classList.toggle('visible', !isOnline);
+    if (cfg.enableToast === 'true' && typeof window.toastNotif === 'function') {
+      var wrap = document.createElement('span');
+      var icon = document.createElement('i');
+      icon.className = isOnline ? 'onWifi' : 'offWifi';
+      wrap.appendChild(icon);
+      wrap.appendChild(document.createTextNode(isOnline ? cfg.onlineMes : cfg.offlineMes));
+      try { window.toastNotif(wrap.innerHTML); } catch (e) {}
+    }
+    if (typeof window.vibRate === 'function') { try { window.vibRate(isOnline ? 40 : 90); } catch (e) {} }
+  }
+
+  window.addEventListener('offline', function () { show(false); });
+  window.addEventListener('online', function () { show(true); });
+
+  function start() {
+    if (!document.body) { document.addEventListener('DOMContentLoaded', start, { once: true }); return; }
+    if (typeof navigator.onLine === 'boolean' && navigator.onLine === false) show(false);
+  }
+  start();
+})();
+
+
+// plusui-lazy — double-click a code block to copy it
+// Replaces CopyPreContent.min.js. Same behaviour and the same PuSet.preCopy message, but:
+//   * navigator.clipboard with an execCommand fallback (the old code used only the
+//     deprecated execCommand path, which Chrome is removing for non-user-gesture calls)
+//   * event delegation, so code blocks added later (infinite scroll, TOC re-render) work
+//   * it copies the block's text, and leaves an existing selection inside the block alone
+(function () {
+  'use strict';
+
+  var cfg = Object.assign({ copiedMes: 'Copied to Clipboard' }, (window.PuSet && window.PuSet.preCopy) || {});
+
+  function notify() {
+    if (typeof window.toastNotif === 'function') { try { window.toastNotif(cfg.copiedMes); } catch (e) {} }
+    if (typeof window.vibRate === 'function') { try { window.vibRate(75); } catch (e) {} }
+  }
+
+  function copy(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(notify, function () { legacy(text); });
+    } else {
+      legacy(text);
+    }
+  }
+
+  function legacy(text) {
+    var area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+    document.body.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(area);
+    if (ok) notify();
+  }
+
+  document.addEventListener('dblclick', function (e) {
+    var pre = e.target.closest ? e.target.closest('pre') : null;
+    if (!pre) return;
+    var sel = window.getSelection ? window.getSelection() : null;
+    var selected = sel ? String(sel) : '';
+    var selectionInside = selected.length > 2 && sel.anchorNode && pre.contains(sel.anchorNode);
+    var code = selectionInside
+      ? selected
+      : (pre.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+    if (code) copy(code);
+  });
+})();
