@@ -1452,3 +1452,15 @@
 .chpN.n > *:first-child::before {
   content: 'Next Chapter';
 }
+
+/* 7. The "Plus UI Settings" widget in Layout holds plain `key: value` text, which the HTML
+      widget prints raw onto the page. Keep it off the site but editable inside the Layout
+      editor, where Blogger puts id="layout" on <body>. */
+body:not(#layout) .puCfg {
+  display: none;
+}
+body#layout .puCfg .widget-content {
+  white-space: pre-wrap;
+  font: 12px/1.6 monospace;
+  color: #333;
+}

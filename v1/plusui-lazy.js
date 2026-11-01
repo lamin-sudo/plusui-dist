@@ -1,4 +1,164 @@
 /* plusui-lazy v1 - built 2026-11-01 - dz-gsmdz.blogspot.com */
+// plusui-lazy — owner settings read from the Layout
+//
+// The blog owner edits a single HTML widget named "Plus UI Settings" in Blogger -> Layout.
+// Its content is lines of `key: value` (everything after a `#` is a comment). Nothing here
+// needs the theme HTML, and the widget is only ever shown to him, never to visitors.
+//
+// This module must stay FIRST in the lazy bundle: related/download/consent/adsense/views read
+// PU.cfg while they initialise, and this bundle is deferred, so the widget is already parsed.
+//
+// Two ways to control the same things, deliberately:
+//   * Theme Designer (Customise) writes the values into the skin's `$(...)` variables, which
+//     become the CSS custom properties listed below.
+//   * This widget writes the same custom properties inline on <html>, which beats the
+//     stylesheet, and also drives the behaviour keys that CSS cannot express.
+(function () {
+  'use strict';
+
+  window.PU = window.PU || {};
+  var cfg = PU.cfg = PU.cfg || {};
+
+  // key -> how to validate/normalise it. Anything not listed is ignored with a warning.
+  var INT = function (min, max) {
+    return function (v) {
+      var n = parseInt(String(v).replace(/[^\d-]/g, ''), 10);
+      if (isNaN(n)) return null;
+      return Math.min(max, Math.max(min, n));
+    };
+  };
+  var LEN = function (v) {
+    v = String(v).trim();
+    return (/^-?(?:\d+\.?\d*|\.\d+)(px|%|em|rem|vw|vh|vmin|vmax)$/.test(v) || v === '0') ? v : null;
+  };
+  var BOOL = function (v) {
+    v = String(v).trim().toLowerCase();
+    if (v === 'true' || v === 'yes' || v === 'on' || v === '1') return true;
+    if (v === 'false' || v === 'no' || v === 'off' || v === '0') return false;
+    return null;
+  };
+  var FONT = function (v) {
+    // Family names only; Blogger/Google font names never contain anything else we allow.
+    v = String(v).trim().replace(/[;,]/g, ' ').replace(/\s+/g, ' ');
+    return /^[A-Za-z0-9 ]{1,40}$/.test(v) ? v : null;
+  };
+
+  var KEYS = {
+    // Mobile drawer (the panel that slides in from the side)
+    mobNavWidth:   { css: '--mobNavW',   check: LEN,   dflt: null },
+    mobNavMax:     { css: '--mobNavMax', check: LEN,   dflt: null },
+    mobNavInset:   { css: '--mobNavPad', check: LEN,   dflt: null },
+    mobNavFont:    { css: '--mobNavFS',  check: LEN,   dflt: null },
+    mobNavTopPad:  { css: '--mobNavTop', check: LEN,   dflt: null },
+    // Bottom bar (the fixed row of icons at the foot of the screen)
+    mobBarHeight:  { css: '--mobBarH',     check: LEN, dflt: null },
+    mobBarInset:   { css: '--mobBarPad',   check: LEN, dflt: null },
+    mobBarIcon:    { css: '--mobBarIcon',  check: LEN, dflt: null },
+    mobBarFont:    { css: '--mobBarFS',    check: LEN, dflt: null },
+    mobBarVisible: { css: null,            check: BOOL, dflt: true },
+    // Behaviour
+    relatedCount:     { css: null, check: INT(0, 20),   dflt: null },
+    downloadSeconds:  { css: null, check: INT(0, 600),  dflt: null },
+    rememberMinutes:  { css: null, check: INT(0, 1440), dflt: null },
+    consentDays:      { css: null, check: INT(1, 3650), dflt: null },
+    backToTopAfter:   { css: null, check: INT(0, 100000), dflt: 320 },
+    showViews:        { css: null, check: BOOL, dflt: true },
+    adBlockNotice:    { css: null, check: BOOL, dflt: true },
+    // Fonts (each key is one family name; the generic fallback and the Google request
+    // are added for you)
+    fontHeading: { css: '--fontH', check: FONT, dflt: null, google: true,  fallback: 'sans-serif' },
+    fontBody:    { css: '--fontB', check: FONT, dflt: null, google: true,  fallback: 'sans-serif', also: ['--fontBa'] },
+    fontMono:    { css: '--fontC', check: FONT, dflt: null, google: true,  fallback: 'monospace' },
+    loadFonts:   { css: null,      check: BOOL, dflt: true }
+  };
+
+  var root = document.documentElement;
+  var wanted = [];
+
+  function apply(name, value) {
+    var spec = KEYS[name];
+    cfg[name] = value;
+    if (spec.css && value !== null) {
+      var stack = spec.fallback ? value + ',' + spec.fallback : String(value);
+      root.style.setProperty(spec.css, stack);
+      (spec.also || []).forEach(function (extra) { root.style.setProperty(extra, stack); });
+      if (spec.google) wanted.push(String(value));
+    }
+  }
+
+  function parse(text) {
+    var lines = String(text).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].replace(/#.*$/, '').trim();
+      if (!line || line.indexOf(':') === -1) continue;
+      var name = line.slice(0, line.indexOf(':')).trim();
+      var raw = line.slice(line.indexOf(':') + 1).trim();
+      var spec = KEYS[name];
+      if (!spec) {
+        if (window.console && console.warn) console.warn('[plusui] settings: unknown key "' + name + '"');
+        continue;
+      }
+      var value = spec.check(raw);
+      if (value === null) {
+        if (window.console && console.warn) console.warn('[plusui] settings: bad value for "' + name + '": ' + raw);
+        continue;
+      }
+      apply(name, value);
+    }
+  }
+
+  function loadFonts() {
+    if (!wanted.length || cfg.loadFonts === false) return;
+    // Families the page already asks for must not be requested twice.
+    var already = '';
+    Array.prototype.forEach.call(document.querySelectorAll('link[href*="fonts.googleapis.com"]'), function (l) {
+      already += l.href;
+    });
+    var add = [];
+    wanted.forEach(function (fam) {
+      if (already.indexOf('family=' + encodeURIComponent(fam)) === -1 && already.indexOf('family=' + fam) === -1) {
+        add.push('family=' + encodeURIComponent(fam) + ':ital,wght@0,400;0,500;0,600;0,700;1,400');
+      }
+    });
+    if (!add.length) return;
+    var l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.setAttribute('data-pu-fonts', '1');
+    l.href = 'https://fonts.googleapis.com/css2?' + add.join('&') + '&display=swap';
+    document.head.appendChild(l);
+  }
+
+  function hideBar(hide) {
+    if (!hide) return;
+    var st = document.getElementById('pu-bar-off');
+    if (st) return;
+    st = document.createElement('style');
+    st.id = 'pu-bar-off';
+    // The footer reserves space for the bar, so remove that reservation too.
+    st.textContent = '.mobMn{display:none!important}' +
+      'body .blogCont{padding-bottom:0!important}' +
+      '.bD:not(.MN-4) .mobMn:not(.no-items) + footer{padding-bottom:0!important}';
+    document.head.appendChild(st);
+  }
+
+  var host = document.getElementById('plusui-settings');
+  if (host) {
+    parse(host.textContent);
+    loadFonts();
+    if (cfg.mobBarVisible === false) hideBar(true);
+  } else if (window.console && console.warn) {
+    console.warn('[plusui] settings: the "Plus UI Settings" section is not on this page');
+  }
+
+  // Defaults for anything the widget did not set, so consumers never test for undefined.
+  Object.keys(KEYS).forEach(function (k) {
+    if (cfg[k] === undefined) cfg[k] = KEYS[k].dflt;
+  });
+
+  window.puSettings = { raw: parse, values: cfg };
+})();
+
+
 // plusui-lazy — Blogger's admin-only markup (.blog-admin)
 //
 // The theme hides every admin element with one plain rule inside <b:skin>:
@@ -81,7 +241,9 @@
   if (!host) return;
 
   var STYLE = cfg.widgetStyle || 1;
-  var WANT = parseInt(cfg.numPosts, 10) || 4;
+  var C = (window.PU && PU.cfg) || {};      // Layout -> "Plus UI Settings" wins over the widget
+  var WANT = (typeof C.relatedCount === 'number') ? C.relatedCount : (parseInt(cfg.numPosts, 10) || 4);
+  if (WANT === 0) return;                   // 0 means: no related posts on this blog
   var SUM = parseInt(cfg.summaryLength, 10) || 0;
   var TITLE = (cfg.titleLength && cfg.titleLength !== 'auto') ? parseInt(cfg.titleLength, 10) : 0;
   var MORE = cfg.moreText || 'Read more';
@@ -246,7 +408,13 @@
   var running = {};
 
   function conf() {
-    return Object.assign({ rememberMinutes: 60, autoOpen: false }, window.downloadBoxConfig || {});
+    var c = Object.assign({ rememberMinutes: 60, autoOpen: false }, window.downloadBoxConfig || {});
+    // Layout -> "Plus UI Settings" overrides both the wait and how long the unlock lasts,
+    // so the number does not have to be re-typed in every post.
+    var fromLayout = (window.PU && PU.cfg) ? PU.cfg : null;
+    if (fromLayout && typeof fromLayout.rememberMinutes === 'number') c.rememberMinutes = fromLayout.rememberMinutes;
+    if (fromLayout && typeof fromLayout.downloadSeconds === 'number') c.seconds = fromLayout.downloadSeconds;
+    return c;
   }
   function hashKey(url) {
     var h = 5381, s = String(url);
@@ -294,7 +462,14 @@
       return;
     }
 
-    var total = Math.max(1, parseInt(seconds, 10) || 10);
+    var forced = conf().seconds;
+    if (typeof forced === 'number' && forced <= 0) {   // Layout said: no wait at all
+      if (label) label.textContent = 'Ready to download';
+      ready(box, link, url, newTab, 0);
+      return;
+    }
+
+    var total = Math.max(1, parseInt((typeof forced === 'number' ? forced : seconds), 10) || 10);
     var left = total;
     if (typeof window.neonLight === 'function') { try { window.neonLight(total * 1000); } catch (e) {} }
     box.classList.add('dldAlt');
@@ -758,6 +933,8 @@
     (window.PuSet && window.PuSet.cookieCon) || {});
 
   function days() {
+    var fromLayout = (window.PU && PU.cfg) ? PU.cfg.consentDays : null;
+    if (typeof fromLayout === 'number' && fromLayout > 0) return fromLayout;   // Layout wins
     var fromTemplate = parseInt(cfg.consentMaxAge, 10);
     // the template ships 2592000 (30 days); we keep our own default unless the owner
     // sets cookieCon.consentMaxAge deliberately to something else
@@ -846,7 +1023,8 @@
     granted: function () { return answer() === 'Accepted'; },
     refused: function () { return answer() === 'Declined'; },
     decided: function () { return answer() === 'Accepted' || answer() === 'Declined'; },
-    value: answer
+    value: answer,
+    ttlDays: days            // what Layout -> consentDays resolves to (also used by the harness)
   };
 
   function start() {
@@ -904,6 +1082,7 @@
   function showNotice() {
     var box = notice();
     if (!box) return;                                  // template has no notice: say nothing
+    if (window.PU && PU.cfg && PU.cfg.adBlockNotice === false) return;  // turned off in Layout
     if (PU.store.cookie.get('antiAB_ign')) return;     // visitor already dismissed it
     box.classList.add('visible');
     var close = box.querySelector('.fxPuCl');
@@ -1071,8 +1250,12 @@
   var abbreviate = rv.abbreviation === 'true';
   // blogID is a top-level const in the template, not a window property (see core/globals.js).
   var blogID = (window.PU && PU.env) ? PU.env.blogID() : '';
-  if (!url || !blogID) {
-    if (window.console && console.warn) console.warn('[plusui] real views: no databaseUrl or blogID');
+  if (!blogID || (PU.cfg && PU.cfg.showViews === false)) {
+    if (window.console && console.warn) console.warn('[plusui] real views: ' + (blogID ? 'switched off in Layout' : 'no blogID'));
+    return;
+  }
+  if (!url) {
+    if (window.console && console.warn) console.warn('[plusui] real views: no databaseUrl');
     return;
   }
 

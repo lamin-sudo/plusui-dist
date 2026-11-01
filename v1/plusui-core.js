@@ -255,6 +255,12 @@ PU.store = (function () {
     ) - window.innerHeight;
   }
 
+  function threshold() {
+    // The owner can move it from Layout -> "Plus UI Settings" (backToTopAfter).
+    var c = (window.PU && PU.cfg) ? PU.cfg.backToTopAfter : null;
+    return (typeof c === 'number' && !isNaN(c)) ? c : 320;
+  }
+
   function paint() {
     ticking = false;
     if (!resolve()) return;
@@ -263,7 +269,7 @@ PU.store = (function () {
 
     if (bar) bar.style.width = pct + '%';
     if (top) {
-      var show = y > 320;
+      var show = y > threshold();
       if (show && top.className.indexOf('vsbl') === -1) top.classList.add('vsbl');
       else if (!show && top.className.indexOf('vsbl') !== -1) top.classList.remove('vsbl');
     }
