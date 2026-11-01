@@ -259,3 +259,137 @@
     }, 1000);
   };
 })();
+
+
+// plusui-lazy — Table of contents
+// Same public API as upstream (new TableOfContents({from, to}).generateToc()) so the
+// template keeps working, but it also self-starts: it finds #postToc / #autoToc and the
+// article body by itself, which is what lets us drop the obfuscated loader later.
+//
+// Fixed versus upstream:
+//   * heading ids are slugified and de-duplicated (upstream used raw text with spaces
+//     turned into "_", so two identical headings produced the same id and the second
+//     anchor never worked)
+//   * no headings -> nothing happens (upstream called appendChild(null) and threw)
+//   * ids are capped and ASCII-folded so they stay valid in a URL fragment
+//   * the active entry is tracked with one IntersectionObserver instead of nothing,
+//     so long posts show where the reader is
+(function () {
+  'use strict';
+
+  var BODY_SELECTORS = ['#postBody', '.postBody', '.entry-content'];
+
+  function slugify(text, used) {
+    var base = String(text || '')
+      .replace(/[^\p{L}\p{N}\s-]/gu, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .slice(0, 60)
+      .toLowerCase();
+    if (!base) base = 'section';
+    var id = base, n = 2;
+    while (used[id]) { id = base + '-' + (n++); }
+    used[id] = true;
+    return id;
+  }
+
+  function levelOf(el) {
+    var n = parseInt(el.tagName.slice(1), 10);
+    return (n >= 1 && n <= 6) ? n : 1;
+  }
+
+  function TableOfContents(opts) {
+    this.fromElement = opts.from;
+    this.toElement = opts.to;
+    if (!this.fromElement) return;
+    this.headingElements = this.fromElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
+  }
+
+  TableOfContents.prototype.generateToc = function () {
+    var headings = this.headingElements;
+    if (!this.toElement || !headings || !headings.length) return;
+
+    var used = {};
+    var headings = Array.prototype.slice.call(this.headingElements);
+    var baseLevel = 6;
+    headings.forEach(function (h) { baseLevel = Math.min(baseLevel, levelOf(h)); });
+
+    var root = document.createElement('ol');
+    var lists = { 0: root };          // relative depth -> the <ol> that holds its items
+    var currentList = root;
+    var lastRel = 0;
+    var links = [];
+
+    for (var i = 0; i < headings.length; i++) {
+      var heading = headings[i];
+      if (!heading.id) heading.id = slugify(heading.textContent, used);
+      else if (!used[heading.id]) used[heading.id] = true;
+
+      var rel = levelOf(heading) - baseLevel;
+
+      if (rel > lastRel) {                       // go one level deeper per step
+        for (var d = lastRel + 1; d <= rel; d++) {
+          var holder = document.createElement('li');
+          var nested = document.createElement('ol');
+          holder.appendChild(nested);
+          currentList.appendChild(holder);
+          currentList = nested;
+          lists[d] = nested;
+        }
+      } else if (rel < lastRel) {                // come back up to an existing list
+        currentList = lists[rel] || root;
+      }
+
+      var item = document.createElement('li');
+      var link = document.createElement('a');
+      link.href = '#' + heading.id;
+      link.textContent = heading.textContent;
+      link.className = 'tocLink';
+      if (typeof window.vibRate === 'function') {
+        link.addEventListener('click', function () { try { window.vibRate(50); } catch (e) {} });
+      }
+      item.appendChild(link);
+      currentList.appendChild(item);
+      lastRel = rel;
+      links.push({ link: link, heading: heading });
+    }
+
+    this.toElement.textContent = '';
+    this.toElement.appendChild(root);
+    trackActive(links);
+  };
+
+  function trackActive(links) {
+    if (!('IntersectionObserver' in window) || !links.length) return;
+    var visible = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { visible[en.target.id] = en.isIntersecting; });
+      var current = null;
+      for (var i = 0; i < links.length; i++) {
+        var on = visible[links[i].heading.id];
+        if (on) { current = links[i]; break; }
+      }
+      links.forEach(function (l) { l.link.classList.remove('tocActive'); });
+      if (current) current.link.classList.add('tocActive');
+    }, { rootMargin: '-64px 0px -70% 0px' });
+    links.forEach(function (l) { io.observe(l.heading); });
+  }
+
+  window.TableOfContents = TableOfContents;
+
+  function autoStart() {
+    if (!document.body) { document.addEventListener('DOMContentLoaded', autoStart, { once: true }); return; }
+    var body = null;
+    for (var i = 0; i < BODY_SELECTORS.length; i++) {
+      body = document.querySelector(BODY_SELECTORS[i]);
+      if (body) break;
+    }
+    if (!body) return;
+    ['#postToc', '#autoToc'].forEach(function (sel) {
+      var target = document.querySelector(sel);
+      if (!target) return;
+      try { new TableOfContents({ from: body, to: target }).generateToc(); } catch (e) {}
+    });
+  }
+  autoStart();
+})();
