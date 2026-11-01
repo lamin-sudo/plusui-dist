@@ -595,7 +595,11 @@
     /(^|[/.])1fichier\.com\/\?a\.file=/i,
     /(^|[/.])sourceforge\.net\/[^/]+\/files\//i,
     /(^|[/.])androidfilehost\.com\/\?fid=/i,
-    /(^|[/.])apkpure\.com|(^|[/.])apkcombo\.com\/.*download/i
+    /(^|[/.])apkpure\.com|(^|[/.])apkcombo\.com\/.*download/i,
+    // added after auditing his 142 posts: these three carry 27 real file-share links
+    /(^|[/.])jiocloud\.com\//i,
+    /(^|[/.])(1drv\.ms|onedrive\.live\.com|sharepoint\.com)\/(u|s|c)\//i,
+    /(^|[/.])box\.com\/s\//i
   ];
 
   function looksLikeDownload(u) {
