@@ -1403,6 +1403,93 @@
     color: rgba(255, 255, 255, .8)
 }
 
+/* plusui download card
+   Uses only the theme's own custom properties, so light/dark and every themeN colour
+   scheme apply automatically, exactly like the rest of the blog. Sizes follow the
+   existing .dldCo box (max-width 480px, radius 10px). */
+
+.dlc {
+  max-width: 480px;
+  margin: 24px auto;
+  padding: 14px 16px;
+  background: var(--contentB, #fff);
+  border: 1px solid var(--contentL, rgba(0, 0, 0, .08));
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .05);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.drK .dlc, .dlc.drK {
+  background: var(--darkBa, #1b1b1f);
+  border-color: rgba(255, 255, 255, .08);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, .35);
+}
+
+.dlcHead { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.dlcEx {
+  flex: 0 0 auto; min-width: 46px; text-align: center;
+  padding: 6px 8px; border-radius: var(--buttonR, 8px);
+  background: var(--linkB, var(--linkC, #008c5f)); color: #fff;
+  font-weight: 700; font-size: 11px; letter-spacing: .04em;
+}
+.dlcTitles { min-width: 0; }
+.dlcNm { font-weight: 700; color: var(--headC, #202124); word-break: break-word; }
+.drK .dlcNm { color: var(--darkT, #eee); }
+.dlcMt { color: var(--bodyCa, rgba(0, 0, 0, .55)); font-size: 12px; word-break: break-word; }
+.drK .dlcMt { color: var(--darkTa, rgba(255, 255, 255, .6)); }
+
+.dlcRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.dlcLbl { font-weight: 600; color: var(--bodyC, #333); }
+.drK .dlcLbl { color: var(--darkT, #ddd); }
+
+.dlcB {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 6px 11px; border: 0; border-radius: var(--buttonR, 8px);
+  background: var(--linkB, var(--linkC, #008c5f)); color: #fff !important;
+  font: inherit; font-size: 12px; font-weight: 600; text-decoration: none;
+  cursor: pointer; transition: var(--trans-2, all .2s ease);
+}
+.dlcB:hover { opacity: .88; }
+.dlcB.dlcMini { background: transparent; color: var(--linkC, #008c5f) !important; border: 1px solid var(--linkC, #008c5f); }
+.drK .dlcB.dlcMini { color: var(--darkU, #7dd) !important; border-color: var(--darkU, #7dd); }
+.dlcCopy { margin-left: auto; }
+
+.dlcUrlRow { background: rgba(0, 0, 0, .03); border-radius: 8px; padding: 8px 10px; }
+.drK .dlcUrlRow { background: rgba(255, 255, 255, .05); }
+.dlcUrl {
+  flex: 1 1 100%; min-width: 0; font-family: var(--fontC, monospace); font-size: 11px;
+  color: var(--bodyCa, #555); word-break: break-all;
+}
+.drK .dlcUrl { color: var(--darkTa, #bbb); }
+.dlcHex { font-family: var(--fontC, monospace); font-size: 11px; word-break: break-all; }
+
+.dlcVerify { margin: 10px 0; }
+.dlcPanel { margin-top: 8px; padding: 10px; border-radius: 8px; background: rgba(0, 0, 0, .03); }
+.drK .dlcPanel { background: rgba(255, 255, 255, .05); }
+.dlcPanel.hidden { display: none; }
+.dlcFile { width: 100%; font: inherit; font-size: 12px; }
+.dlcHint { margin: 6px 0 10px; font-size: 11px; color: var(--bodyCa, #666); }
+.drK .dlcHint { color: var(--darkTa, #aaa); }
+.dlcHash { margin: 4px 0; font-size: 12px; }
+.dlcHash .dlcMini { margin-left: 6px; }
+.dlcErr { color: #d93025; font-size: 12px; }
+.dlcMatch.ok { color: var(--linkC, #0a7c4d); font-weight: 700; }
+.dlcMatch.no { color: #d93025; font-weight: 700; }
+.drK .dlcMatch.ok { color: #6ddba4; }
+
+.dlcNote { margin: 10px 0 0; font-size: 11px; color: var(--bodyCa, #666); }
+.drK .dlcNote { color: var(--darkTa, #aaa); }
+.dlcScanned span { font-family: var(--fontC, monospace); font-size: 12px; }
+
+/* the theme's own countdown markup lives inside the card - keep it inside the box */
+.dlc .dldCo { max-width: none; margin: 12px 0 0; }
+.dlc .dldRt { text-decoration: none; }
+
+@media screen and (max-width: 500px) {
+  .dlc { margin: 18px 0; padding: 12px; font-size: 12px; }
+  .dlcCopy { margin-left: 0; }
+}
+
 /* plusui patches
    Small corrections applied on top of the original Plus UI component CSS.
    Each rule fixes something the audit found in the upstream files. */
