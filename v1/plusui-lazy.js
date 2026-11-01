@@ -75,13 +75,24 @@
   var root = document.documentElement;
   var wanted = [];
 
+  // The skin declares its custom properties on
+  //   :root, :root .lgT:not(.drK), :root .theme0:not(.drK){--mobNavW: ...; ...}
+  // and those theme classes sit on <body> (Blogger + mode.js put them there), so <body>
+  // gets its OWN copy of every property. A value inherited from <html> loses to that,
+  // no matter how it is set. Writing the override on <body> as well is what actually
+  // reaches the elements - measured, not assumed.
+  function setProp(name, value) {
+    root.style.setProperty(name, value);
+    if (document.body) document.body.style.setProperty(name, value);
+  }
+
   function apply(name, value) {
     var spec = KEYS[name];
     cfg[name] = value;
     if (spec.css && value !== null) {
       var stack = spec.fallback ? value + ',' + spec.fallback : String(value);
-      root.style.setProperty(spec.css, stack);
-      (spec.also || []).forEach(function (extra) { root.style.setProperty(extra, stack); });
+      setProp(spec.css, stack);
+      (spec.also || []).forEach(function (extra) { setProp(extra, stack); });
       if (spec.google) wanted.push(String(value));
     }
   }
