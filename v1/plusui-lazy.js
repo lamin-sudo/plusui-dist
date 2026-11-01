@@ -983,3 +983,87 @@
     run('');
   }
 })();
+
+
+// plusui-lazy — real view counts (Firebase RTDB)
+// Replaces the counter that lived inside the template's obfuscated eval block.
+// Same database, same paths, same numbers: BlogID_<blogID>/PostID_<id> (and
+// BlogID_<blogID>/WebsiteStats), so nothing has to be migrated.
+//
+// Two things are better than the original:
+//   * firebase.database().transaction() instead of read-then-write. The old code did
+//     once('value') -> set(n+1), so two tabs, or a fast reader, silently lose counts.
+//   * a failed write no longer hides the number: the last known value is still shown.
+//
+// The elements come from the template:
+//   <span class="pVws hidden pu-views" data-add="true" data-id="<postID>">  -> count + show
+//   <span class="pV hidden pu-views" data-id="<postID>">                    -> show only
+//   <span class="pu-views" data-add="true" data-id="WebsiteStats">          -> site total
+// The visible number is written to data-text, which the theme CSS prints with ::after.
+(function () {
+  'use strict';
+
+  var rv = (window.PuSet && window.PuSet.realViews) || {};
+  var url = rv.databaseUrl;
+  var abbreviate = rv.abbreviation === 'true';
+  var nodes = document.querySelectorAll('.pu-views');
+  if (!url || !nodes.length || !window.blogID) return;
+
+  var SDK = {
+    app: 'https://www.gstatic.com/firebasejs/8.4.2/firebase-app.js',
+    db: 'https://www.gstatic.com/firebasejs/8.4.2/firebase-database.js'
+  };
+
+  function abv(n) {
+    var v = Number(n) || 0;
+    if (v < 1000) return String(v);
+    if (v < 1000000) return (Math.round((v / 1000) * 10) / 10).toString().replace(/\.0$/, '') + 'K';
+    return (Math.round((v / 1000000) * 10) / 10).toString().replace(/\.0$/, '') + 'M';
+  }
+  function show(node, value) {
+    node.setAttribute('data-text', abbreviate ? abv(value) : String(value || 0));
+    node.classList.remove('hidden');
+  }
+  function load(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = resolve;
+      s.onerror = function () { reject(new Error('blocked: ' + src)); };
+      document.head.appendChild(s);
+    });
+  }
+
+  // If the page already carries the compat SDK, do not fetch it a second time.
+  var ready = (window.firebase && firebase.database)
+    ? Promise.resolve()
+    : load(SDK.app).then(function () { return load(SDK.db); });
+
+  ready
+    .then(function () {
+      if (!window.firebase || !firebase.database) throw new Error('firebase compat SDK missing');
+      if (!firebase.apps.length) firebase.initializeApp({ databaseURL: url });
+      var db = firebase.database();
+
+      Array.prototype.forEach.call(nodes, function (node) {
+        var id = node.getAttribute('data-id');
+        if (!id) return;
+        var ref = db.ref('BlogID_' + window.blogID + '/' + id);
+        var shouldAdd = node.getAttribute('data-add') === 'true';
+
+        if (!shouldAdd) {
+          ref.once('value').then(function (snap) { show(node, snap.val() || 0); }, function () {});
+          return;
+        }
+
+        ref.transaction(function (current) { return (current || 0) + 1; })
+          .then(function (res) { show(node, res.snapshot.val() || 0); })
+          // write refused or offline: still print what we know instead of hiding it
+          .catch(function () { ref.once('value').then(function (s) { show(node, s.val() || 0); }, function () {}); });
+      });
+    })
+    .catch(function (e) {
+      if (window.console && console.warn) console.warn('[plusui] real views:', e.message);
+    });
+})();
