@@ -1446,3 +1446,9 @@
 .dldCo .dldRty .dldRt {
   cursor: pointer;
 }
+
+/* 6. Chapters: the label comes from position (::before says "Previous Chapter" for the
+      first child), so a next-only list used to be labelled "Previous Chapter". */
+.chpN.n > *:first-child::before {
+  content: 'Next Chapter';
+}

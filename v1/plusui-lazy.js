@@ -161,7 +161,10 @@
       host.appendChild(wrap);
       if (typeof cfg.callBack === 'function') { try { cfg.callBack(); } catch (e) {} }
     })
-    .catch(function () { /* no related posts is better than a broken page */ });
+    .catch(function (e) {
+      /* no related posts is better than a broken page - but say why once */
+      if (window.console && console.warn) console.warn('[plusui] related posts:', e.message);
+    });
 })();
 
 
@@ -669,4 +672,314 @@
       : (pre.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
     if (code) copy(code);
   });
+})();
+
+
+// plusui-lazy — cookie consent (real)
+// The theme already ships the bar markup (#ckWrap with .ckH/.ckD/.ckF and one Accept
+// button). Upstream CookieConsent.min.js only ever accepted, so it was not consent:
+// there was no way to refuse, no way to withdraw, and the cookie carried no SameSite.
+//
+// This one:
+//   * Accept / Decline, both remembered in the CookiePolicy cookie
+//   * consent expires and the bar comes back after CONSENT_TTL_DAYS (change one line)
+//   * a decline hides the ad slots and stops our own AdSense loader (adsense.js asks
+//     PU.consent.granted() before it injects anything)
+//   * cookie is SameSite=Lax and Secure where the page is https
+//   * window.cookieSettings() re-opens the bar, and any [data-cookie-settings] element
+//     on the page is wired to it, so a footer link can offer withdrawal
+(function () {
+  'use strict';
+
+  var CONSENT_TTL_DAYS = 180;               // <- the only line to edit to change the period
+  var COOKIE = 'CookiePolicy';
+  var cfg = Object.assign({ consentMaxAge: String(CONSENT_TTL_DAYS * 24 * 3600) },
+    (window.PuSet && window.PuSet.cookieCon) || {});
+
+  function days() {
+    var fromTemplate = parseInt(cfg.consentMaxAge, 10);
+    // the template ships 2592000 (30 days); we keep our own default unless the owner
+    // sets cookieCon.consentMaxAge deliberately to something else
+    return (fromTemplate && fromTemplate !== 2592000) ? Math.max(1, Math.round(fromTemplate / 86400)) : CONSENT_TTL_DAYS;
+  }
+
+  function answer() { return PU.store.cookie.get(COOKIE); }
+
+  function setChoice(value) {
+    PU.store.cookie.set(COOKIE, value, { 'max-age': days() * 24 * 3600 });
+  }
+
+  function hideAds(hide) {
+    var style = document.getElementById('plusui-consent-ads');
+    if (!hide) { if (style) style.remove(); return; }
+    if (style) return;
+    style = document.createElement('style');
+    style.id = 'plusui-consent-ads';
+    style.textContent = '.adsbygoogle,.blogAd,.ancrA{display:none !important}';
+    document.head.appendChild(style);
+  }
+
+  function bar() { return document.getElementById('ckWrap'); }
+
+  function openBar() {
+    var box = bar();
+    if (!box) return;
+    box.classList.remove('a');
+    box.classList.add('v');
+  }
+  function closeBar() {
+    var box = bar();
+    if (!box) return;
+    box.classList.add('a');
+    box.classList.remove('v');
+  }
+
+  function declineButton(box) {
+    var actions = box.querySelector('.ckF');
+    if (!actions || document.getElementById('ckDecline')) return;
+    var btn = document.createElement('button');
+    btn.className = 'ckB';
+    btn.id = 'ckDecline';
+    btn.type = 'button';
+    btn.textContent = 'No, thanks';
+    actions.insertBefore(btn, actions.lastElementChild);
+  }
+
+  function decide(value) {
+    setChoice(value);
+    if (value === 'Declined') hideAds(true); else hideAds(false);
+    closeBar();
+    // adsense.js waits for this so an ad tag is never injected before an answer
+    document.dispatchEvent(new CustomEvent('pu:consent', { detail: value }));
+  }
+
+  function wire() {
+    var box = bar();
+    if (!box) return;
+    declineButton(box);
+    var accept = document.getElementById('ckAccept');
+    var decline = document.getElementById('ckDecline');
+    if (accept && !accept.dataset.bound) {
+      accept.dataset.bound = '1';
+      accept.addEventListener('click', function () { decide('Accepted'); });
+    }
+    if (decline && !decline.dataset.bound) {
+      decline.dataset.bound = '1';
+      decline.addEventListener('click', function () { decide('Declined'); });
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-cookie-settings]'), function (link) {
+      if (link.dataset.bound) return;
+      link.dataset.bound = '1';
+      link.addEventListener('click', function (e) { e.preventDefault(); window.cookieSettings(); });
+    });
+  }
+
+  window.cookieSettings = function () {
+    PU.store.cookie.del(COOKIE);
+    openBar();
+  };
+
+  // Public answer for the other modules (adsense.js uses this before loading anything).
+  window.PU = window.PU || {};
+  PU.consent = {
+    granted: function () { return answer() === 'Accepted'; },
+    refused: function () { return answer() === 'Declined'; },
+    decided: function () { return answer() === 'Accepted' || answer() === 'Declined'; },
+    value: answer
+  };
+
+  function start() {
+    if (!document.body) { document.addEventListener('DOMContentLoaded', start, { once: true }); return; }
+    if (!bar()) return;
+    wire();
+    var choice = answer();
+    if (choice === 'Declined') { hideAds(true); closeBar(); return; }
+    if (choice === 'Accepted') { hideAds(false); closeBar(); return; }
+    openBar();
+  }
+  start();
+})();
+
+
+// plusui-lazy — AdSense loader + ad-blocker notice
+// Replaces AdsenseAds.min.js. Same hooks (#antiAdB and its .fxPuCl close button, the
+// antiAB_ign cookie, PuSet.adsenseAds) but:
+//   * it never touches ads unless consent says so: refused = stay hidden, undecided = wait
+//     for the decision (consent.js fires pu:consent)
+//   * the block detection uses the script's own onerror, not a timeout, so a slow
+//     connection is no longer reported as an ad blocker
+//   * the hiding stylesheet has an id and is removed if a slot turns out to be filled
+//     after load, so a false positive is not permanent
+//   * every element lookup is null-guarded (upstream called addCt(null) and threw when
+//     #antiAdB was not in the template)
+(function () {
+  'use strict';
+
+  var cfg = Object.assign({ publisherId: '', antiAdBClose: 'true', ignoreMaxAge: '86400', loadType: 'defer' },
+    (window.PuSet && window.PuSet.adsenseAds) || {});
+
+  var pubId = String(cfg.publisherId || '').replace(/^ca-pub-/, '');
+  var loaded = false, hidden = false;
+
+  function consent() { return window.PU && PU.consent ? PU.consent : null; }
+
+  function hideSlots(on) {
+    var id = 'plusui-ads-blocked';
+    var style = document.getElementById(id);
+    if (on && !style) {
+      style = document.createElement('style');
+      style.id = id;
+      style.textContent = '.adsbygoogle,.blogAd,.ancrA{display:none !important}';
+      document.head.appendChild(style);
+      hidden = true;
+    } else if (!on && style) {
+      style.remove();
+      hidden = false;
+    }
+  }
+
+  function notice() { return document.getElementById('antiAdB'); }
+
+  function showNotice() {
+    var box = notice();
+    if (!box) return;                                  // template has no notice: say nothing
+    if (PU.store.cookie.get('antiAB_ign')) return;     // visitor already dismissed it
+    box.classList.add('visible');
+    var close = box.querySelector('.fxPuCl');
+    if (close && cfg.antiAdBClose === 'true') {
+      close.classList.remove('hidden');
+      if (!close.dataset.bound) {
+        close.dataset.bound = '1';
+        close.addEventListener('click', function () {
+          PU.store.cookie.set('antiAB_ign', '1', { 'max-age': parseInt(cfg.ignoreMaxAge, 10) || 86400 });
+          box.classList.remove('visible');
+        });
+      }
+    }
+  }
+
+  function anySlotFilled() {
+    return Array.prototype.some.call(document.querySelectorAll('.adsbygoogle'), function (slot) {
+      return slot.getBoundingClientRect().height > 20;
+    });
+  }
+
+  function load() {
+    if (loaded) return;
+    if (!pubId) return;
+    var c = consent();
+    if (c && !c.granted()) {
+      if (c.refused()) hideSlots(true);
+      return;                                          // wait for an explicit yes
+    }
+    loaded = true;
+    var tag = document.createElement('script');
+    tag.async = true;
+    tag.id = 'adtrs-js';
+    tag.crossOrigin = 'anonymous';
+    tag.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-' + pubId;
+    tag.onerror = function () { hideSlots(true); showNotice(); };
+    document.head.appendChild(tag);
+
+    // Second look after everything settled: if a real slot has height, the first
+    // verdict was wrong, so undo it instead of leaving the visitor with a blank page.
+    window.addEventListener('load', function () {
+      setTimeout(function () { if (hidden && anySlotFilled()) hideSlots(false); }, 2500);
+    }, { passive: true });
+  }
+
+  function start() {
+    var c = consent();
+    if (!c || c.decided()) { load(); return; }
+    document.addEventListener('pu:consent', function (e) {
+      if (e.detail === 'Accepted') load();
+      else if (e.detail === 'Declined') hideSlots(true);
+    });
+  }
+
+  if (document.body) start();
+  else document.addEventListener('DOMContentLoaded', start, { once: true });
+})();
+
+
+// plusui-lazy — previous / next chapter
+// Replaces AutoChapters.min.js. Same #aChp container, same .chpN markup the theme CSS
+// already styles, same autoChapterConfig, but the choice is deterministic:
+// upstream picked a RANDOM post from the label feed for "previous chapter", so the
+// navigation shuffled on every reload and could point at the post you were reading.
+// This one reads the label feed once, finds the current post by id and takes the
+// neighbours by publication order.
+(function () {
+  'use strict';
+
+  var cfg = Object.assign({ homePage: '/', titleLength: 60, newTabLink: false, callBack: null },
+    window.autoChapterConfig || {});
+  var host = document.getElementById('aChp');
+  if (!host) return;
+
+  var labels = window.labelArray || [];
+  var MAX = 150;
+
+  function clip(text, max) {
+    var s = String(text || '');
+    return (max > 0 && s.length > max) ? s.slice(0, max).trim() + '\u2026' : s;
+  }
+  function linkOf(entry) {
+    var links = entry.link || [];
+    for (var i = 0; i < links.length; i++) if (links[i].rel === 'alternate') return links[i].href;
+    return '';
+  }
+  function isCurrent(entry) {
+    if (!entry.id || !window.blogID || !window.postID) return false;
+    return entry.id.$t.indexOf('blog-' + window.blogID + '.post-' + window.postID) !== -1;
+  }
+  function feedUrl(label) {
+    return (cfg.homePage || '/').replace(/\/$/, '') + '/feeds/posts/summary' +
+      (label ? '/-/' + encodeURIComponent(label) : '') +
+      '?alt=json&max-results=' + MAX + '&orderby=published';
+  }
+
+  function build(prev, next) {
+    var wrap = document.createElement('div');
+    wrap.className = 'chpN' + (prev && !next ? ' p' : (next && !prev ? ' n' : ''));
+    [prev, next].forEach(function (post) {
+      if (!post) return;
+      var a = document.createElement('a');
+      a.href = linkOf(post) || '#';
+      a.setAttribute('data-text', clip(post.title && post.title.$t, parseInt(cfg.titleLength, 10)));
+      a.title = (post.title && post.title.$t) || '';
+      if (cfg.newTabLink) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+      if (typeof window.vibRate === 'function') {
+        a.addEventListener('click', function () { try { window.vibRate(50); } catch (e) {} });
+      }
+      wrap.appendChild(a);
+    });
+    host.textContent = '';
+    host.appendChild(wrap);
+    if (typeof cfg.callBack === 'function') { try { cfg.callBack(); } catch (e) {} }
+  }
+
+  function run(label) {
+    fetch(feedUrl(label), { credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error('feed ' + r.status); return r.json(); })
+      .then(function (data) {
+        var entries = (data.feed && data.feed.entry) || [];
+        var at = -1;
+        for (var i = 0; i < entries.length; i++) { if (isCurrent(entries[i])) { at = i; break; } }
+        if (at === -1) return;                       // not in this feed: no chapters
+        // feed is newest first: the older chapter sits at at+1, the newer one at at-1
+        build(entries[at + 1], entries[at - 1]);
+      })
+      .catch(function (e) {
+        // a silent catch hides real bugs; warn once without disturbing the reader
+        if (window.console && console.warn) console.warn('[plusui] chapters:', e.message);
+      });
+  }
+
+  if (labels.length) {
+    // use the post's first label; it is the series the chapters belong to
+    run(labels[0]);
+  } else {
+    run('');
+  }
 })();
