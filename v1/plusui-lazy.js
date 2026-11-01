@@ -849,7 +849,8 @@
   }
 
   function fromLinks(root) {
-    if (cfg().downloadCards === 'off' || cfg().downloadCards === 'manual') return;
+    var mode = cfg().downloadCards;                    // auto (default) | manual | off
+    if (mode === 'off') return;
     var scope = (root && root.querySelectorAll) ? root : document;
     var links = scope.querySelectorAll('#postBody a[href]');
     Array.prototype.forEach.call(links, function (a) {
@@ -860,17 +861,27 @@
       if (!url) return;
       if (a.closest && a.closest(SKIP_inside)) { a.dataset.puCard = 'skipped'; return; }
       if (a.querySelector('img') || a.getElementsByTagName('img').length) { a.dataset.puCard = 'skipped'; return; }
-      if (!looksLikeDownload(url)) { a.dataset.puCard = 'skipped'; return; }
+
+      // The owner copies links from other GSM sites and cannot know where each one lands, so
+      // the trustworthy signal is him marking the link: class="pu-card" or data-dl on the <a>.
+      // Guessing by extension/host stays as a bonus for the obvious files.
+      var forced = a.classList.contains('pu-card') || a.hasAttribute('data-dl');
+      if (!forced) {
+        if (mode !== 'auto') return;                   // manual = marked links only, never guessed
+        if (!looksLikeDownload(url)) { a.dataset.puCard = 'skipped'; return; }
+      }
+
       var text = (a.textContent || '').trim();
-      var guess = nameFromUrl(url);
-      var name = (text.length >= 4 && text.length <= 120 && !/^https?:/i.test(text)) ? text : guess;
+      var name = (text.length >= 4 && text.length <= 120 && !/^https?:/i.test(text)) ? text : nameFromUrl(url);
+      if (a.dataset.dlName) name = a.dataset.dlName;
       var box = card({
         file: url,
         name: name,
-        source: '', seconds: null
+        source: a.getAttribute('data-dl-source') || '',
+        seconds: a.getAttribute('data-dl-seconds')
       });
       if (!box) return;
-      a.dataset.puCard = '1';
+      a.dataset.puCard = forced ? 'marked' : '1';
       a.parentNode.replaceChild(box, a);
     });
   }
