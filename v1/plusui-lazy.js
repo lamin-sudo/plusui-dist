@@ -463,6 +463,8 @@
   function ready(box, link, url, newTab, seconds) {
     box.classList.remove('dldAlt');
     box.classList.add('dldRty');
+    // A card can ask for its own wording once the wait is over (data-pu-ready-text).
+    if (link && link.dataset && link.dataset.puReadyText) link.textContent = link.dataset.puReadyText;
     link.onclick = function () { lock(url); go(url, newTab); };
     if (conf().autoOpen) { setTimeout(function () { go(url, newTab); }, seconds > 0 ? 1000 : 0); }
   }
@@ -782,6 +784,9 @@
     box.appendChild(verifyPanel(data.sha256));
 
     var gate = el('div', 'dldCo');
+    // download.js toggles dldAlt/dldRty on the element it is given, so the selector must be
+    // the countdown box itself - pointing it at the card left the box never "ready".
+    gate.id = id + '-box';
     gate.appendChild(el('span', 'dldMe', 'Download'));
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 34 34');
@@ -790,7 +795,11 @@
     svg.appendChild(c1);
     gate.appendChild(svg);
     var btn = el('a', 'dldRt', 'Download');
-    btn.href = fileUrl; btn.rel = 'nofollow noopener noreferrer';
+    btn.href = fileUrl;
+    btn.rel = 'nofollow noopener noreferrer';
+    // Two clicks: the first starts the wait, the second leaves - in a NEW tab, so the
+    // article (and the disclaimer the visitor just read) stays where it was.
+    btn.dataset.puReadyText = 'Download now';
     gate.appendChild(btn);
     box.appendChild(gate);
 
@@ -805,10 +814,16 @@
     if (seconds === null && typeof forced === 'number') seconds = forced;
     if (seconds === null) seconds = 10;
 
+    var sent = false;
     btn.addEventListener('click', function (ev) {
+      // Never let the bare href move the page - the wait must happen first.
       ev.preventDefault();
-      if (typeof window.download === 'function') { window.download(fileUrl, seconds, false, '#' + id); }
-      else { window.open(fileUrl, '_blank', 'noopener,noreferrer'); }
+      if (typeof window.download !== 'function') { window.open(fileUrl, '_blank', 'noopener,noreferrer'); return; }
+      if (!gate.classList.contains('dldRty')) { window.download(fileUrl, seconds, true, '#' + gate.id); return; }
+      // The wait is paid: download.js owns this click and opens the tab. A double click
+      // must not open a second one.
+      if (sent) { btn.onclick = null; return; }
+      sent = true;
     });
     return box;
   }
