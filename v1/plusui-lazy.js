@@ -1116,7 +1116,13 @@
       function process(node) {
         if (node.dataset.puDone) return;
         node.dataset.puDone = '1';
-        var id = node.getAttribute('data-id');
+        var raw = node.getAttribute('data-id') || '';
+        // The template prints data-id="<post id>" as a bare number, while the database
+        // keys are BlogID_<blog>/PostID_<post> (checked with ?shallow=true: 59 children,
+        // every one of them named PostID_*). 'WebsiteStats' is already a key name, so
+        // only a purely numeric id gets the prefix - otherwise we would create a second,
+        // parallel counter per post and show 1 where the real number is hundreds.
+        var id = /^\d+$/.test(raw) ? 'PostID_' + raw : raw;
         if (!id) return;
         var ref = db.ref('BlogID_' + blogID + '/' + id);
         var shouldAdd = node.getAttribute('data-add') === 'true';
