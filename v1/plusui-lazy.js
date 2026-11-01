@@ -1,4 +1,65 @@
 /* plusui-lazy v1 - built 2026-11-01 - dz-gsmdz.blogspot.com */
+// plusui-lazy — Blogger's admin-only markup (.blog-admin)
+//
+// The theme hides every admin element with one plain rule inside <b:skin>:
+//   .blog-admin, .bD .bmPs, ... , .cusW{display:none}
+// and expects Blogger's per-viewer stylesheet to reveal it again:
+//   https://www.blogger.com/dyn-css/authorization.css?targetBlogID=<blogID>
+// That URL answers with CSS only for a requester who owns the blog, and with 0 bytes
+// for everyone else (checked anonymously: 301 -> /dyncss/<blogID>/authorization.css
+// -> 200, empty body).
+//
+// On this template the reveal never happens. The head is closed with the escaped-head
+// trick (`<!--[ </head> close ]-->` followed by `<!--<head/><b:if cond='!data:blog.adsenseClientId'>...`),
+// and because this blog IS linked to AdSense inside Blogger settings, the `-->` and the
+// `</head>` on that line are suppressed. Everything Blogger then injects - the Roboto
+// @font-face, the authorization.css <link>, the adsense metas - falls inside that still
+// open HTML comment. Verified on the live post page: only two stylesheet links reach the
+// DOM (Jost + plusui.css) and the authorization.css href sits in a comment node.
+//
+// What the owner loses is exactly what he reported: the in-post Quick Edit cluster (the
+// gear that opens into New post / All posts / Comments / Stats / Settings / Edit this
+// post), the "Edit" badges over post thumbnails, and the #admCk slot.
+//
+// Re-injecting the same URL restores them, and changes nothing for visitors because the
+// response is empty for them. We deliberately do NOT add a local `.blog-admin{display:...}`
+// rule: that would hand the admin shortcuts to every reader.
+(function () {
+  'use strict';
+
+  var ENDPOINT = 'https://www.blogger.com/dyn-css/authorization.css?targetBlogID=';
+  var MARK = 'data-pu-admin';
+
+  function inject() {
+    if (!window.PU || !PU.env) return;
+    if (document.querySelector('link[' + MARK + ']')) return;
+    var id = PU.env.blogID();
+    if (!/^\d{5,}$/.test(id)) {
+      if (window.console && console.warn) console.warn('[plusui] admin css: blogID not found');
+      return;
+    }
+    var l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.setAttribute(MARK, '1');
+    // Appended last, so it wins the cascade against the theme's own display:none,
+    // exactly the way Blogger places it in a normal theme.
+    l.href = ENDPOINT + encodeURIComponent(id);
+    (document.head || document.documentElement).appendChild(l);
+  }
+
+  // The bundle is deferred, so the template's consts and the .blog-admin markup are
+  // already parsed here; the readyState check only covers a template that drops defer.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', inject, { once: true });
+  } else {
+    inject();
+  }
+
+  // Exposed for the harness and for any widget added later.
+  window.puAdminCss = inject;
+})();
+
+
 // plusui-lazy — Related Posts
 // Replaces RelatedPosts.min.js. Same config object (relatedPostConfig) and the same
 // markup/classes the theme CSS expects, so the look does not change.
@@ -131,9 +192,9 @@
   }
 
   function currentPostId() {
-    // the template exposes postID/blogID next to the license key
-    return (window.postID && window.blogID)
-      ? 'blog-' + window.blogID + '.post-' + window.postID : null;
+    // blogID/postID are top-level const in the template, not window properties;
+    // PU.env reads them the way the browser actually exposes them.
+    return (window.PU && PU.env) ? PU.env.entryId() : null;
   }
 
   fetch(feedUrl(), { credentials: 'same-origin' })
@@ -930,8 +991,10 @@
     return '';
   }
   function isCurrent(entry) {
-    if (!entry.id || !window.blogID || !window.postID) return false;
-    return entry.id.$t.indexOf('blog-' + window.blogID + '.post-' + window.postID) !== -1;
+    // The template declares blogID/postID as top-level const, so window.* is undefined.
+    var mine = (window.PU && PU.env) ? PU.env.entryId() : null;
+    if (!mine || !entry.id) return false;
+    return entry.id.$t.indexOf(mine) !== -1;
   }
   function feedUrl(label) {
     return (cfg.homePage || '/').replace(/\/$/, '') + '/feeds/posts/summary' +
@@ -1006,8 +1069,12 @@
   var rv = (window.PuSet && window.PuSet.realViews) || {};
   var url = rv.databaseUrl;
   var abbreviate = rv.abbreviation === 'true';
-  var nodes = document.querySelectorAll('.pu-views');
-  if (!url || !nodes.length || !window.blogID) return;
+  // blogID is a top-level const in the template, not a window property (see core/globals.js).
+  var blogID = (window.PU && PU.env) ? PU.env.blogID() : '';
+  if (!url || !blogID) {
+    if (window.console && console.warn) console.warn('[plusui] real views: no databaseUrl or blogID');
+    return;
+  }
 
   var SDK = {
     app: 'https://www.gstatic.com/firebasejs/8.4.2/firebase-app.js',
@@ -1046,10 +1113,12 @@
       if (!firebase.apps.length) firebase.initializeApp({ databaseURL: url });
       var db = firebase.database();
 
-      Array.prototype.forEach.call(nodes, function (node) {
+      function process(node) {
+        if (node.dataset.puDone) return;
+        node.dataset.puDone = '1';
         var id = node.getAttribute('data-id');
         if (!id) return;
-        var ref = db.ref('BlogID_' + window.blogID + '/' + id);
+        var ref = db.ref('BlogID_' + blogID + '/' + id);
         var shouldAdd = node.getAttribute('data-add') === 'true';
 
         if (!shouldAdd) {
@@ -1061,9 +1130,60 @@
           .then(function (res) { show(node, res.snapshot.val() || 0); })
           // write refused or offline: still print what we know instead of hiding it
           .catch(function () { ref.once('value').then(function (s) { show(node, s.val() || 0); }, function () {}); });
-      });
+      }
+
+      function processAll() {
+        Array.prototype.forEach.call(document.querySelectorAll('.pu-views'), process);
+      }
+
+      // The template calls puViews() after infinite-scroll adds more posts.
+      window.puViews = processAll;
+      processAll();
     })
     .catch(function (e) {
       if (window.console && console.warn) console.warn('[plusui] real views:', e.message);
     });
+})();
+
+
+// plusui-lazy — Google Analytics (gtag.js)
+// The template's obfuscated block used to load gtag with PuSet.analytics.propertyID,
+// which is Blogger's data:blog.analyticsAccountNumber. Keeping that behaviour, but:
+//   * it does nothing until the visitor answers the cookie bar (Blogger stats are not
+//     affected - they are server side and need no script at all)
+//   * the id is read straight from the constant the template already defines, so an
+//     empty "Settings -> Analytics for Bloggers" field simply means no request
+//   * one guard instead of a silent failure: a refused load warns once
+(function () {
+  'use strict';
+
+  // PuSet is a `var` (so it is on window), but the analyticsID it points at is a
+  // top-level const, so the fallback has to go through PU.env.
+  var id = String((window.PuSet && window.PuSet.analytics && window.PuSet.analytics.propertyID) ||
+    (window.PU && PU.env ? PU.env.str('analyticsID') : '') || '').trim();
+  if (!id || id === 'false' || id === 'null') return;
+  if (document.getElementById('gtag-js')) return;
+
+  function load() {
+    if (document.getElementById('gtag-js')) return;
+    var s = document.createElement('script');
+    s.id = 'gtag-js';
+    s.async = true;
+    s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(id);
+    s.onerror = function () {
+      if (window.console && console.warn) console.warn('[plusui] analytics could not load');
+    };
+    document.head.appendChild(s);
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = function () { window.dataLayer.push(arguments); };
+    window.gtag('js', new Date());
+    window.gtag('config', id);
+  }
+
+  var consent = window.PU && PU.consent;
+  if (!consent || consent.granted()) { load(); return; }
+  if (consent.refused()) return;                      // never send without an answer
+  document.addEventListener('pu:consent', function (e) {
+    if (e.detail === 'Accepted') load();
+  });
 })();

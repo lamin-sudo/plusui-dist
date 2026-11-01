@@ -46,6 +46,86 @@ PU.store = (function () {
 })();
 
 
+// plusui-core — the template's own page facts (blogID, postID, blogUrl, isPost, ...)
+//
+// Blogger renders the theme's globals as one line of top-level `const` inside a classic
+// <script> (right next to the license key). Top-level const/let live in the *global
+// lexical environment*, which is NOT `window` — so `window.blogID` is always undefined
+// on the real blog. Reading them through `window` is what silently killed the view
+// counter, the chapter prev/next and the "exclude the post you are reading" filter,
+// because the local harness happened to declare them as `window.blogID = ...`.
+// These accessors read the identifiers themselves, keep a DOM fallback, and never
+// assume anything is on `window`.
+(function () {
+  'use strict';
+  window.PU = window.PU || {};
+
+  // `typeof X` is safe for an undeclared name; it only throws for a const still in its
+  // temporal dead zone (a script that runs before the template's own declaration).
+  var LEX = {
+    blogUrl:       function () { return typeof blogUrl       !== 'undefined' ? blogUrl       : ''; },
+    blogID:        function () { return typeof blogID        !== 'undefined' ? blogID        : ''; },
+    postID:        function () { return typeof postID        !== 'undefined' ? postID        : ''; },
+    blogTitle:     function () { return typeof blogTitle     !== 'undefined' ? blogTitle     : ''; },
+    analyticsID:   function () { return typeof analyticsID   !== 'undefined' ? analyticsID   : ''; },
+    caPubAdsense:  function () { return typeof caPubAdsense  !== 'undefined' ? caPubAdsense  : ''; },
+    isPreview:     function () { return typeof isPreview     !== 'undefined' ? isPreview     : ''; },
+    isHomepage:    function () { return typeof isHomepage    !== 'undefined' ? isHomepage    : ''; },
+    isSearch:      function () { return typeof isSearch      !== 'undefined' ? isSearch      : ''; },
+    isPost:        function () { return typeof isPost        !== 'undefined' ? isPost        : ''; },
+    isPage:        function () { return typeof isPage        !== 'undefined' ? isPage        : ''; },
+    isSingleItem:  function () { return typeof isSingleItem  !== 'undefined' ? isSingleItem  : ''; },
+    isMobile:      function () { return typeof isMobile      !== 'undefined' ? isMobile      : ''; },
+    isPrivateBlog: function () { return typeof isPrivateBlog !== 'undefined' ? isPrivateBlog : ''; }
+  };
+
+  function str(name) {
+    var v = '';
+    if (LEX[name]) { try { v = LEX[name](); } catch (e) { v = ''; } }
+    if (v === '' || v === null || v === undefined) v = window[name];   // var-style global
+    return (v === undefined || v === null) ? '' : String(v);
+  }
+
+  // The template emits e.g. const postID='false' on views that have no post.
+  function id(name) {
+    var v = str(name);
+    return (v === 'false' || v === 'null' || v === '0') ? '' : v;
+  }
+
+  // Last resort: the admin shortcuts the theme prints on every view contain both ids,
+  // e.g. https://www.blogger.com/blog/post/edit/<blogID>/<postID>
+  function fromMarkup(what) {
+    var nodes = document.querySelectorAll(".blog-admin a, .qeBtn a, a[href*='blogger.com/blog/']");
+    for (var i = 0; i < nodes.length; i++) {
+      var href = nodes[i].getAttribute('href') || '';
+      var both = href.match(/blogger\.com\/blog\/(?:post|page)\/edit\/(\d+)\/(\d+)/);
+      if (both) return what === 'postID' ? both[2] : both[1];
+      if (what === 'blogID') {
+        var one = href.match(/blogger\.com\/blog\/(?:settings|comments|posts|pages|stats)\/(?:week\/)?(\d+)/);
+        if (one) return one[1];
+      }
+    }
+    return '';
+  }
+
+  function global(what) {
+    return id(what) || fromMarkup(what);
+  }
+
+  PU.env = {
+    str: str,
+    flag: function (name) { return str(name) === 'true'; },
+    blogID: function () { return global('blogID'); },
+    postID: function () { return global('postID'); },
+    // The id the Blogger feed uses for an entry, or null when there is no current post.
+    entryId: function () {
+      var b = PU.env.blogID(), p = PU.env.postID();
+      return (b && p) ? 'blog-' + b + '.post-' + p : null;
+    }
+  };
+})();
+
+
 // plusui-core — light / dark / system mode + theme colour
 // Drop-in replacement for modeL / modeD / modeS / webTheme in AdditionalJavascript.min.js.
 // Behaviour verified against the live site (see notes below), not guessed:
